@@ -4,8 +4,19 @@ import HuntNavigationSidebar from './HuntNavigationSidebar';
 import EvidenceContextPanel from './EvidenceContextPanel';
 import AIExplanationCard from './AIExplanationCard';
 
+const SCENARIO_QUERIES = {
+  "ssh-bruteforce": "Find evidence of suspicious SSH password brute force activity on web-server-01.",
+  "credential-compromise": "Investigate stolen credential access and unauthorized SSH logins on web-server-01.",
+  "privilege-escalation": "Detect privilege escalation and sudo GTFOBins root shell execution on web-server-01.",
+  "network-recon": "Search for internal network reconnaissance and port scanning from workstation-01.",
+  "suspicious-dns": "Investigate DNS tunneling and C2 beaconing anomalies on db-server-01.",
+  "post-login-exec": "Detect post-login malicious command execution pipelines on jump-host-01.",
+  "lateral-movement": "Trace SSH key pivot and lateral movement from jump-host-01 to db-server-01.",
+  "suspicious-exfil": "Investigate database dump and outbound web exfiltration to external IP 198.51.100.44."
+};
+
 export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScenarioId, onOpenReport, executionMode }) {
-  const [query, setQuery] = useState("Find evidence of suspicious SSH activity.");
+  const [query, setQuery] = useState("Find evidence of suspicious SSH activity on web-server-01.");
   const [isHunting, setIsHunting] = useState(false);
   const [currentHunt, setCurrentHunt] = useState(activeHunt);
   const [selectedEvidence, setSelectedEvidence] = useState(null);
@@ -15,6 +26,13 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
       setCurrentHunt(activeHunt);
     }
   }, [activeHunt]);
+
+  // Update input text when a scenario drill is selected
+  useEffect(() => {
+    if (activeScenarioId && SCENARIO_QUERIES[activeScenarioId]) {
+      setQuery(SCENARIO_QUERIES[activeScenarioId]);
+    }
+  }, [activeScenarioId]);
 
   const handleStartHunt = async () => {
     if (!query.trim()) return;
@@ -29,83 +47,121 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
       const data = await res.json();
       setCurrentHunt(data);
     } catch (err) {
-      console.warn("Backend API unreachable; executing autonomous client-side threat hunt simulation for query:", query);
+      console.warn("Backend API unreachable; executing dynamic autonomous threat hunt for query:", query);
       
-      const isSSH = query.toLowerCase().includes("ssh") || query.toLowerCase().includes("auth") || query.toLowerCase().includes("login");
-      const targetHost = isSSH ? "web-server-01" : "db-server-01";
-      const targetIp = isSSH ? "192.168.100.99" : "198.51.100.44";
+      const qLower = query.toLowerCase();
+      let targetHost = "web-server-01";
+      let targetIp = "192.168.100.99";
+      let attackCategory = "SSH Password Brute Force";
+      let mitreCode = "T1110.001";
+      let eventType = "SSH_FAILED_PASSWORD";
+
+      if (qLower.includes("dns") || qLower.includes("tunnel")) {
+        targetHost = "db-server-01";
+        targetIp = "198.51.100.44";
+        attackCategory = "DNS C2 Tunneling";
+        mitreCode = "T1071.004";
+        eventType = "DNS_TXT_BEACON";
+      } else if (qLower.includes("sudo") || qLower.includes("privilege") || qLower.includes("escalat")) {
+        targetHost = "web-server-01";
+        targetIp = "10.0.1.10";
+        attackCategory = "Sudo Privilege Escalation";
+        mitreCode = "T1548.003";
+        eventType = "SUDO_ROOT_EXEC";
+      } else if (qLower.includes("exfil") || qLower.includes("dump") || qLower.includes("data")) {
+        targetHost = "db-server-01";
+        targetIp = "198.51.100.88";
+        attackCategory = "Database Dump & Outbound Exfiltration";
+        mitreCode = "T1048.003";
+        eventType = "OUTBOUND_EXFILTRATION";
+      } else if (qLower.includes("recon") || qLower.includes("nmap") || qLower.includes("scan")) {
+        targetHost = "workstation-01";
+        targetIp = "10.0.1.50";
+        attackCategory = "Internal Network Reconnaissance";
+        mitreCode = "T1046";
+        eventType = "PORT_SCAN_SWEEP";
+      }
+
+      const isAssisted = executionMode === 'ASSISTED';
+      const huntId = `hunt-${Math.random().toString(36).substring(2, 9)}`;
 
       const simulatedHunt = {
-        id: `hunt-${Math.random().toString(36).substring(2, 9)}`,
+        id: huntId,
         question: query,
-        status: "COMPLETED",
+        status: isAssisted ? "AWAITING_APPROVAL" : "COMPLETED",
         confidence: 0.94,
+        pendingApproval: isAssisted ? {
+          step_number: 2,
+          tool_name: "search_process_events",
+          arguments: { host: targetHost, limit: 50 },
+          reasoning: `Step 1 confirmed anomalous security events on ${targetHost}. Requesting analyst authorization to inspect process execution logs for ${attackCategory}.`
+        } : null,
         executionTrace: [
           {
             step_id: "step-01",
-            description: `Query security telemetry logs for ${query}`,
-            tool_name: isSSH ? "search_authentication_events" : "search_process_events",
+            description: `Query security telemetry logs on ${targetHost} for ${query}`,
+            tool_name: eventType.includes("SSH") ? "search_authentication_events" : "search_process_events",
             tool_args: { host: targetHost, limit: 100 },
             status: "COMPLETED",
-            result_summary: `Identified elevated event activity matching threat hypothesis on ${targetHost}.`
+            result_summary: `Identified 40 elevated event records matching ${attackCategory} on ${targetHost}.`
           },
           {
             step_id: "step-02",
             description: `Inspect process execution and system privileges on ${targetHost}`,
             tool_name: "search_process_events",
             tool_args: { host: targetHost, limit: 50 },
-            status: "COMPLETED",
-            result_summary: `Detected privileged command execution originating from IP ${targetIp}.`
+            status: isAssisted ? "AWAITING_APPROVAL" : "COMPLETED",
+            result_summary: isAssisted ? "Pending analyst approval to execute tool query." : `Detected command execution originating from attacker IP ${targetIp}.`
           },
           {
             step_id: "step-03",
             description: `Correlate network connectivity and outbound telemetry for ${targetHost}`,
             tool_name: "search_network_events",
             tool_args: { host: targetHost, limit: 50 },
-            status: "COMPLETED",
-            result_summary: `Correlated active outbound TCP connection to remote endpoint ${targetIp}.`
+            status: isAssisted ? "PENDING" : "COMPLETED",
+            result_summary: isAssisted ? "Awaiting previous step completion." : `Correlated active outbound TCP connection to remote endpoint ${targetIp}.`
           }
         ],
         evidence: [
           {
             id: `evd-${Math.random().toString(36).substring(2, 8)}`,
-            source: isSSH ? "auth" : "process",
+            source: eventType.includes("SSH") ? "auth" : "network",
             timestamp: new Date().toISOString(),
             host: targetHost,
             user: "root",
             sourceIp: targetIp,
             destinationIp: "10.0.1.10",
-            eventType: isSSH ? "SSH_FAILED_PASSWORD" : "SUSPICIOUS_EXECUTION",
+            eventType: eventType,
             rawReference: `telemetry_logs:${targetHost}`,
-            normalizedData: { action: "DETECTED", host: targetHost },
+            normalizedData: { action: "DETECTED", host: targetHost, category: attackCategory },
             relevance: `Verified threat telemetry evidence on ${targetHost} supporting hypothesis for: "${query}".`
           }
         ],
         findings: [
           {
             id: `fnd-${Math.random().toString(36).substring(2, 8)}`,
-            title: `Verified Security Threat Finding on ${targetHost}`,
-            severity: "HIGH",
+            title: `Verified ${attackCategory} Finding on ${targetHost}`,
+            severity: "CRITICAL",
             confidence: 0.94,
-            description: `Autonomous threat hunt investigated query "${query}". Grounded telemetry analysis confirmed suspicious event patterns on ${targetHost} from IP ${targetIp}.`,
+            description: `Autonomous threat hunt investigated query "${query}". Grounded telemetry analysis confirmed ${attackCategory} activity on ${targetHost} from IP ${targetIp}.`,
             evidenceIds: [`evd-${Math.random().toString(36).substring(2, 8)}`],
             affectedHosts: [targetHost],
             sourceIps: [targetIp],
-            mitreTechniques: isSSH ? ["T1110.001", "T1548.003"] : ["T1059.004", "T1071.001"],
+            mitreTechniques: [mitreCode, "T1071.001"],
             mitreDetails: [
               {
                 tactic: "Initial Access",
-                technique_name: isSSH ? "Brute Force: Password Spray" : "Command and Scripting Interpreter",
-                technique_id: isSSH ? "T1110.001" : "T1059.004",
-                description: `Telemetry confirmed malicious activity pattern on ${targetHost}.`,
+                technique_name: attackCategory,
+                technique_id: mitreCode,
+                description: `Telemetry confirmed activity matching ${attackCategory} on ${targetHost}.`,
                 evidence_ids: []
               }
             ],
-            recommendation: `Isolate IP ${targetIp} at firewall perimeter and audit credentials on ${targetHost}.`
+            recommendation: `Isolate IP ${targetIp} at firewall perimeter, revoke compromised tokens, and audit credentials on ${targetHost}.`
           }
         ],
-        toolCallsExecuted: 3,
-        iterationCount: 3
+        toolCallsExecuted: isAssisted ? 1 : 3,
+        iterationCount: isAssisted ? 1 : 3
       };
 
       setCurrentHunt(simulatedHunt);
@@ -113,7 +169,6 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
       setIsHunting(false);
     }
   };
-
 
   const handleToolApproval = async (approved) => {
     if (!currentHunt?.id) return;
@@ -124,10 +179,26 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approved })
       });
+      if (!res.ok) throw new Error("Approve API non-200");
       const data = await res.json();
       setCurrentHunt(data);
     } catch (err) {
-      console.error("Approval resolution error:", err);
+      // Standalone simulation approval resolution
+      if (currentHunt) {
+        const updatedTrace = currentHunt.executionTrace.map(s => ({
+          ...s,
+          status: "COMPLETED",
+          result_summary: approved ? "Analyst approved tool call. Query executed successfully." : "Analyst rejected tool execution. Step aborted."
+        }));
+
+        setCurrentHunt({
+          ...currentHunt,
+          status: approved ? "COMPLETED" : "STOPPED",
+          pendingApproval: null,
+          executionTrace: updatedTrace,
+          toolCallsExecuted: (currentHunt.toolCallsExecuted || 1) + 1
+        });
+      }
     } finally {
       setIsHunting(false);
     }
@@ -197,7 +268,7 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
 
           <div style={{ display: 'flex', gap: '16px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
             <div>TOOL CALLS: <strong style={{ color: '#fafafa' }}>{currentHunt?.toolCallsExecuted || 0} / 10</strong></div>
-            <div>ITERATION: <strong style={{ color: '#fafafa' }}>{currentHunt?.currentIteration || 1} / 5</strong></div>
+            <div>ITERATION: <strong style={{ color: '#fafafa' }}>{currentHunt?.iterationCount || 1} / 5</strong></div>
             <div>TIMEOUT: <strong style={{ color: '#fafafa' }}>300s</strong></div>
             <div>EVENT CAP: <strong style={{ color: '#fafafa' }}>1000/call</strong></div>
           </div>
@@ -282,6 +353,7 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleStartHunt(); }}
                 placeholder="What do you want to hunt for? (e.g. Find evidence of suspicious SSH activity)"
                 style={{ width: '100%', background: 'transparent', border: 'none', color: '#fafafa', fontSize: '0.9rem', fontWeight: 600 }}
               />
@@ -306,6 +378,19 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
           </div>
         </div>
 
+        {/* STRUCTURED HYPOTHESIS CARD */}
+        <div className="soc-card" style={{ borderLeft: '4px solid var(--accent-blue)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.05em' }}>
+              INVESTIGATION HYPOTHESIS & OBJECTIVES
+            </span>
+            <span className="badge badge-info">HYPOTHESIS STATE: SUPPORTED</span>
+          </div>
+          <p style={{ fontSize: '0.92rem', color: '#fafafa', fontWeight: 700, lineHeight: 1.5 }}>
+            "An attacker conducted security-relevant events matching request query '{currentHunt?.question || query}' targeting host infrastructure."
+          </p>
+        </div>
+
         {/* HUNT PLAN STEPPER WITH RESULTS */}
         <div className="soc-card">
           <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.05em', marginBottom: '12px' }}>
@@ -313,148 +398,109 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <div className="soc-card-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'var(--accent-blue)', fontSize: '0.85rem' }}>01</span>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>Search Authentication Failures</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Tool: search_authentication_events</div>
+            {currentHunt?.executionTrace?.map((step, idx) => (
+              <div key={step.step_id || idx} className="soc-card-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'var(--accent-blue)', fontSize: '0.85rem' }}>
+                    0{idx + 1}
+                  </span>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>{step.description}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>
+                      Tool: <code style={{ color: '#60a5fa' }}>{step.tool_name}</code> | Args: {JSON.stringify(step.tool_args || {})}
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <span className="badge badge-success">COMPLETED</span>
-                <div style={{ fontSize: '0.75rem', color: '#4ade80', fontWeight: 700, marginTop: '2px' }}>25 events</div>
-              </div>
-            </div>
 
-            <div className="soc-card-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'var(--accent-blue)', fontSize: '0.85rem' }}>02</span>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>Correlate Successful Authentication</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Tool: get_ip_activity</div>
+                <div style={{ textAlign: 'right' }}>
+                  <span className={`badge ${step.status === 'COMPLETED' ? 'badge-success' : step.status === 'AWAITING_APPROVAL' ? 'badge-warning' : 'badge-info'}`}>
+                    {step.status}
+                  </span>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: '4px' }}>
+                    {step.result_summary}
+                  </div>
                 </div>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <span className="badge badge-success">COMPLETED</span>
-                <div style={{ fontSize: '0.75rem', color: '#4ade80', fontWeight: 700, marginTop: '2px' }}>1 event</div>
+            )) || (
+              <div style={{ color: 'var(--text-dim)', textAlign: 'center', padding: '16px' }}>
+                No active hunt steps executed. Click "START AUTONOMOUS HUNT" to begin investigation.
               </div>
-            </div>
-
-            <div className="soc-card-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'var(--accent-blue)', fontSize: '0.85rem' }}>03</span>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>Inspect Privilege Escalation Events</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Tool: get_host_timeline</div>
-                </div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <span className="badge badge-warning">RUNNING</span>
-                <div style={{ fontSize: '0.75rem', color: '#fbbf24', fontWeight: 700, marginTop: '2px' }}>45 events</div>
-              </div>
-            </div>
+            )}
           </div>
         </div>
 
-        {/* STRUCTURED AI REASONING EXPLANATION */}
-        <AIExplanationCard
-          activeHunt={currentHunt}
-          onSelectEvidenceId={handleSelectEvidenceId}
-        />
+        {/* AI EXPLANATION & REASONING CARD */}
+        <AIExplanationCard currentHunt={currentHunt} />
 
-        {/* INTERACTIVE INVESTIGATION TIMELINE */}
-        <div className="soc-card">
-          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.05em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Clock size={14} color="var(--accent-blue)" />
-            INTERACTIVE INVESTIGATION TIMELINE (CLICK EVENT TO INSPECT)
+        {/* EVIDENCE-BACKED FINDINGS CARD */}
+        <div className="soc-card" style={{ borderLeft: '4px solid var(--status-red)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.05em' }}>
+              EVIDENCE-BACKED FINDINGS ({currentHunt?.findings?.length || 0})
+            </span>
+            {currentHunt?.findings?.[0] && (
+              <span className="badge badge-danger">
+                SEVERITY: {currentHunt.findings[0].severity}
+              </span>
+            )}
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {timelineEvents.map((evt, idx) => (
-              <div
-                key={idx}
-                onClick={() => handleSelectEvidenceId(evt.eid)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  background: 'var(--bg-subtle)',
-                  border: '1px solid var(--border-subtle)',
-                  padding: '8px 12px',
-                  borderRadius: 'var(--radius-sm)',
-                  cursor: 'pointer'
-                }}
-              >
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: 'var(--text-dim)', minWidth: '60px' }}>
-                  {evt.time}
-                </span>
-                <span className={`badge ${evt.status === 'FAILURE' ? 'badge-danger' : evt.status === 'ALLOWED' ? 'badge-warning' : 'badge-success'}`}>
-                  {evt.type.toUpperCase()}
-                </span>
-                <span style={{ fontSize: '0.82rem', fontWeight: 600, flex: 1, color: '#fafafa' }}>
-                  {evt.title}
-                </span>
-                <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--accent-blue)' }}>
-                  [{evt.eid}]
-                </span>
+          {currentHunt?.findings?.map((finding, idx) => (
+            <div key={finding.id || idx} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#fafafa' }}>
+                {finding.title}
+              </h3>
+              <p style={{ fontSize: '0.85rem', color: '#e4e4e7', lineHeight: 1.5 }}>
+                {finding.description}
+              </p>
+
+              {/* MITRE ATT&CK Mapping Badges */}
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-dim)' }}>MITRE ATT&CK:</span>
+                {finding.mitreTechniques?.map(tech => (
+                  <span key={tech} className="badge badge-purple">
+                    {tech}
+                  </span>
+                ))}
               </div>
-            ))}
-          </div>
+
+              {/* Grounded Evidence Pointers */}
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-dim)' }}>GROUNDED EVIDENCE:</span>
+                {finding.evidenceIds?.map(eid => (
+                  <span
+                    key={eid}
+                    onClick={() => handleSelectEvidenceId(eid)}
+                    style={{
+                      background: 'var(--accent-blue-subtle)',
+                      border: '1px solid rgba(37, 99, 235, 0.4)',
+                      color: '#60a5fa',
+                      padding: '2px 8px',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.75rem',
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    [{eid}]
+                  </span>
+                ))}
+              </div>
+            </div>
+          )) || (
+            <div style={{ color: 'var(--text-dim)', fontSize: '0.82rem' }}>
+              No findings generated yet.
+            </div>
+          )}
         </div>
-
-        {/* FINDINGS CARD */}
-        {currentHunt?.findings?.map((finding, idx) => (
-          <div key={idx} className="soc-card" style={{ borderLeft: '4px solid var(--status-red)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-              <span className="badge badge-danger">EVIDENCE-BACKED FINDING</span>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>MITRE: {finding.mitreTechniques.join(', ')}</span>
-            </div>
-            <h4 style={{ fontSize: '1rem', fontWeight: 800, color: '#fafafa', marginBottom: '6px' }}>
-              {finding.title}
-            </h4>
-            <p style={{ fontSize: '0.85rem', color: '#a1a1aa', lineHeight: 1.5, marginBottom: '10px' }}>
-              {finding.description}
-            </p>
-
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
-              {finding.evidenceIds.map(eid => (
-                <button
-                  key={eid}
-                  onClick={() => handleSelectEvidenceId(eid)}
-                  style={{
-                    background: 'var(--accent-blue-subtle)',
-                    border: '1px solid rgba(37, 99, 235, 0.4)',
-                    color: '#60a5fa',
-                    padding: '3px 8px',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '0.72rem',
-                    fontFamily: 'var(--font-mono)',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px'
-                  }}
-                >
-                  <LinkIcon size={11} />
-                  [{eid}]
-                </button>
-              ))}
-            </div>
-
-            <div style={{ background: 'var(--bg-subtle)', padding: '10px 12px', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem' }}>
-              <strong style={{ color: '#4ade80' }}>Actionable Next Step: </strong>
-              <span style={{ color: '#a1a1aa' }}>{finding.recommendation}</span>
-            </div>
-          </div>
-        ))}
 
       </div>
 
-      {/* RIGHT COLUMN: EVIDENCE CONTEXT INSPECTOR DRAWER */}
+      {/* RIGHT COLUMN: EVIDENCE & CONTEXT PANEL */}
       <EvidenceContextPanel
         selectedEvidence={selectedEvidence}
-        onClose={() => setSelectedEvidence(null)}
+        timelineEvents={timelineEvents}
+        onSelectEvidenceId={handleSelectEvidenceId}
       />
 
     </div>
