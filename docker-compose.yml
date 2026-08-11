@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # 1. FASTAPI THREAT HUNTING BACKEND SERVICE
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: threat_hunting_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PROJECT_NAME=Autonomous Threat-Hunting Copilot
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - POSTGRES_SERVER=db
+      - POSTGRES_USER=threat_hunter
+      - POSTGRES_PASSWORD=threat_hunter_sec_pass_2026
+      - POSTGRES_DB=threat_hunting_db
+    env_file:
+      - .env.example
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - soc_network
+
+  # 2. REACT SOC ANALYST WORKSTATION FRONTEND SERVICE
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: threat_hunting_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - soc_network
+
+  # 3. POSTGRESQL TELEMETRY & AUDIT DATABASE SERVICE
+  db:
+    image: postgres:15-alpine
+    container_name: threat_hunting_db
+    environment:
+      POSTGRES_USER: threat_hunter
+      POSTGRES_PASSWORD: threat_hunter_sec_pass_2026
+      POSTGRES_DB: threat_hunting_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U threat_hunter -d threat_hunting_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - soc_network
+
+networks:
+  soc_network:
+    driver: bridge
+
+volumes:
+  postgres_data:

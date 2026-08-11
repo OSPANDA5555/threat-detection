@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Autonomous Threat-Hunting Copilot | Standalone SOC Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #070a12;
+      --bg-card: rgba(15, 23, 42, 0.85);
+      --border-color: rgba(51, 65, 85, 0.6);
+      --border-glow: rgba(0, 242, 254, 0.3);
+      --primary-cyan: #00f2fe;
+      --primary-blue: #4facfe;
+      --accent-purple: #8b5cf6;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-crimson: #ef4444;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+    header {
+      background: rgba(7, 10, 18, 0.95);
+      border-bottom: 1px solid var(--border-color);
+      padding: 16px 28px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .logo-box {
+      width: 42px; height: 42px; border-radius: 10px;
+      background: linear-gradient(135deg, rgba(0,242,254,0.2), rgba(139,92,246,0.2));
+      border: 1px solid var(--border-glow);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.4rem;
+    }
+    h1 { font-size: 1.2rem; font-weight: 800; background: linear-gradient(to right, #ffffff, #a5f3fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    nav { display: flex; gap: 8px; background: rgba(15,23,42,0.6); padding: 4px; border-radius: 8px; border: 1px solid var(--border-color); }
+    nav button {
+      background: transparent; color: var(--text-muted); border: 1px solid transparent; padding: 8px 14px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; cursor: pointer;
+    }
+    nav button.active { background: rgba(0,242,254,0.12); color: var(--primary-cyan); border-color: rgba(0,242,254,0.3); }
+    main { max-width: 1500px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 24px; }
+    .glass-card {
+      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 24px;
+    }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; }
+    .badge-info { background: rgba(79,172,254,0.15); color: var(--primary-blue); border: 1px solid rgba(79,172,254,0.3); }
+    .badge-success { background: rgba(16,185,129,0.15); color: var(--accent-emerald); border: 1px solid rgba(16,185,129,0.3); }
+    .badge-danger { background: rgba(239,68,68,0.15); color: var(--accent-crimson); border: 1px solid rgba(239,68,68,0.3); }
+    .badge-purple { background: rgba(139,92,246,0.15); color: var(--accent-purple); border: 1px solid rgba(139,92,246,0.3); }
+    .code-block { font-family: var(--font-mono); background: #020617; border: 1px solid var(--border-color); padding: 12px 16px; border-radius: 8px; color: #a5f3fc; font-size: 0.85rem; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .btn-primary { background: linear-gradient(135deg, var(--primary-cyan), var(--primary-blue)); color: #070a12; font-weight: 800; padding: 12px 24px; border-radius: 8px; border: none; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo-box">🛡️</div>
+      <div>
+        <h1>AUTONOMOUS THREAT-HUNTING COPILOT</h1>
+        <div style="font-size: 0.75rem; color: var(--text-muted);">SOC Operations Console • Zero-Trust Tool Gateway Sandbox</div>
+      </div>
+    </div>
+    <nav>
+      <button class="active" onclick="showTab('workspace')">Hunt Workspace</button>
+      <button onclick="showTab('evidence')">Evidence Store</button>
+      <button onclick="showTab('findings')">Findings</button>
+      <button onclick="showTab('health')">Tool Gateway</button>
+    </nav>
+    <div style="text-align: right;">
+      <div id="api-status" style="color: var(--accent-emerald); font-weight: 800; font-size: 0.85rem;">● API ONLINE</div>
+      <div style="font-size: 0.7rem; color: var(--text-dim); font-family: var(--font-mono);">9 APPROVED TOOLS</div>
+    </div>
+  </header>
+
+  <main>
+    <!-- WORKSPACE TAB -->
+    <div id="tab-workspace" class="tab-content">
+      <div class="glass-card" style="margin-bottom: 20px;">
+        <div style="font-size: 0.8rem; font-weight: 700; color: var(--primary-cyan); margin-bottom: 6px;">ANALYST HUNT QUESTION</div>
+        <div style="display: flex; gap: 12px;">
+          <input id="hunt-input" type="text" value="Find evidence of suspicious SSH activity." style="flex:1; background:#020617; border:1px solid var(--border-color); color:var(--text-main); padding:12px 16px; border-radius:8px; font-size:0.95rem; font-weight:600;">
+          <button class="btn-primary" onclick="runHunt()">GENERATE HUNT PLAN</button>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="glass-card">
+          <span class="badge badge-purple" style="margin-bottom: 10px;">FORMULATED HYPOTHESIS</span>
+          <p style="font-size: 1.05rem; font-weight: 600; background: rgba(139,92,246,0.1); padding: 14px; border-left: 4px solid var(--accent-purple); border-radius: 6px; margin-top: 8px;">
+            "An attacker may have attempted credential-based access against an internal Linux host via SSH password brute force."
+          </p>
+
+          <h3 style="font-size: 1rem; font-weight: 700; margin-top: 24px; margin-bottom: 12px;">STRUCTURED HUNT PLAN</h3>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <div style="background:#020617; border:1px solid var(--border-color); padding:12px; border-radius:8px;">
+              <div style="font-weight:700; color:var(--primary-cyan);">1. Search Authentication Failures</div>
+              <div style="font-size:0.82rem; color:var(--text-muted);">Query authentication logs for SSH password failures.</div>
+              <span style="font-size:0.75rem; font-family:var(--font-mono); color:var(--accent-emerald);">Tool: search_authentication_events</span>
+            </div>
+            <div style="background:#020617; border:1px solid var(--border-color); padding:12px; border-radius:8px;">
+              <div style="font-weight:700; color:var(--primary-cyan);">2. Summarize Suspicious Source IP Activity</div>
+              <div style="font-size:0.82rem; color:var(--text-muted);">Inspect network connections and authentication history for source IP.</div>
+              <span style="font-size:0.75rem; font-family:var(--font-mono); color:var(--accent-emerald);">Tool: get_ip_activity</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="glass-card">
+          <span class="badge badge-success" style="margin-bottom: 10px;">TOOL GATEWAY LIVE AUDIT</span>
+          <div class="code-block" style="margin-top: 10px; margin-bottom: 20px;">
+            [2026-08-10T19:30:15Z] search_authentication_events -> 18 records (42ms) [SUCCESS]<br>
+            [2026-08-10T19:30:45Z] get_ip_activity -> 5 records (38ms) [SUCCESS]<br>
+            [2026-08-10T19:31:00Z] get_host_timeline -> 45 records (51ms) [SUCCESS]
+          </div>
+
+          <span class="badge badge-danger" style="margin-bottom: 10px;">PRODUCED FINDING</span>
+          <div style="background: rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); padding:16px; border-radius:8px;">
+            <h4 style="color:#fca5a5; margin-bottom:6px;">SSH Credential Access Attempt via Brute Force</h4>
+            <p style="font-size:0.85rem; color:#cbd5e1;">High volume of SSH authentication failures observed from internal IP 192.168.1.105 targeting host srv-prod-linux01.</p>
+            <div style="margin-top:10px;">
+              <span class="badge badge-purple">MITRE ATT&CK: T1110.001</span>
+              <span class="badge badge-info">EVIDENCE: evd-ssh-bruteforce-01</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function showTab(tabName) {
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      event.target.classList.add('active');
+    }
+    async function checkHealth() {
+      try {
+        const res = await fetch('/api/v1/health');
+        const data = await res.json();
+        if (data.status === 'HEALTHY') {
+          document.getElementById('api-status').innerText = '● API ONLINE (9 TOOLS)';
+        }
+      } catch (e) {
+        document.getElementById('api-status').innerText = '● STANDALONE MODE';
+      }
+    }
+    checkHealth();
+  </script>
+</body>
+</html>
