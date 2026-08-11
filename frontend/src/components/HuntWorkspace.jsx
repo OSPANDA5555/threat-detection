@@ -6,6 +6,7 @@ import AIExplanationCard from './AIExplanationCard';
 
 const SCENARIO_QUERIES = {
   "ssh-bruteforce": "Find evidence of suspicious SSH password brute force activity on web-server-01.",
+  "port-ssh-scan": "Scan open SSH ports, active listening services, and banners across host web-server-01.",
   "credential-compromise": "Investigate stolen credential access and unauthorized SSH logins on web-server-01.",
   "privilege-escalation": "Detect privilege escalation and sudo GTFOBins root shell execution on web-server-01.",
   "network-recon": "Search for internal network reconnaissance and port scanning from workstation-01.",
@@ -55,8 +56,18 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
       let attackCategory = "SSH Password Brute Force";
       let mitreCode = "T1110.001";
       let eventType = "SSH_FAILED_PASSWORD";
+      let primaryTool = "search_authentication_events";
+      let step1Summary = `Found 40 SSH password failure events originating from IP ${targetIp}.`;
 
-      if (qLower.includes("dns") || qLower.includes("tunnel")) {
+      if (qLower.includes("port") || qLower.includes("open") || qLower.includes("banner")) {
+        targetHost = "web-server-01";
+        targetIp = "192.168.100.99";
+        attackCategory = "Network Service Discovery & Open SSH Port Audit";
+        mitreCode = "T1046";
+        eventType = "OPEN_PORT_AUDIT";
+        primaryTool = "scan_open_ports";
+        step1Summary = "Scanned host web-server-01: Discovered Open SSH (Port 22, OpenSSH 8.2p1), Open HTTP (Port 80, Nginx 1.18.0), and Open HTTPS (Port 443).";
+      } else if (qLower.includes("dns") || qLower.includes("tunnel")) {
         targetHost = "db-server-01";
         targetIp = "198.51.100.44";
         attackCategory = "DNS C2 Tunneling";
@@ -94,16 +105,16 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
           step_number: 2,
           tool_name: "search_process_events",
           arguments: { host: targetHost, limit: 50 },
-          reasoning: `Step 1 confirmed anomalous security events on ${targetHost}. Requesting analyst authorization to inspect process execution logs for ${attackCategory}.`
+          reasoning: `Step 1 confirmed open ports and security telemetry on ${targetHost}. Requesting analyst authorization to inspect process execution logs for ${attackCategory}.`
         } : null,
         executionTrace: [
           {
             step_id: "step-01",
-            description: `Query security telemetry logs on ${targetHost} for ${query}`,
-            tool_name: eventType.includes("SSH") ? "search_authentication_events" : "search_process_events",
+            description: primaryTool === "scan_open_ports" ? `Scan open ports and listening services on ${targetHost}` : `Query security telemetry logs on ${targetHost} for ${query}`,
+            tool_name: primaryTool,
             tool_args: { host: targetHost, limit: 100 },
             status: "COMPLETED",
-            result_summary: `Identified 40 elevated event records matching ${attackCategory} on ${targetHost}.`
+            result_summary: step1Summary
           },
           {
             step_id: "step-02",
@@ -111,7 +122,7 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
             tool_name: "search_process_events",
             tool_args: { host: targetHost, limit: 50 },
             status: isAssisted ? "AWAITING_APPROVAL" : "COMPLETED",
-            result_summary: isAssisted ? "Pending analyst approval to execute tool query." : `Detected command execution originating from attacker IP ${targetIp}.`
+            result_summary: isAssisted ? "Pending analyst approval to execute tool query." : `Detected active SSH daemon process (sshd PID 1482) and privileged execution on ${targetHost}.`
           },
           {
             step_id: "step-03",
@@ -119,13 +130,13 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
             tool_name: "search_network_events",
             tool_args: { host: targetHost, limit: 50 },
             status: isAssisted ? "PENDING" : "COMPLETED",
-            result_summary: isAssisted ? "Awaiting previous step completion." : `Correlated active outbound TCP connection to remote endpoint ${targetIp}.`
+            result_summary: isAssisted ? "Awaiting previous step completion." : `Correlated network TCP connection on SSH port 22 from ${targetIp}.`
           }
         ],
         evidence: [
           {
             id: `evd-${Math.random().toString(36).substring(2, 8)}`,
-            source: eventType.includes("SSH") ? "auth" : "network",
+            source: primaryTool === "scan_open_ports" ? "network" : eventType.includes("SSH") ? "auth" : "network",
             timestamp: new Date().toISOString(),
             host: targetHost,
             user: "root",
@@ -133,31 +144,31 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
             destinationIp: "10.0.1.10",
             eventType: eventType,
             rawReference: `telemetry_logs:${targetHost}`,
-            normalizedData: { action: "DETECTED", host: targetHost, category: attackCategory },
-            relevance: `Verified threat telemetry evidence on ${targetHost} supporting hypothesis for: "${query}".`
+            normalizedData: { action: "OPEN_PORT_FOUND", host: targetHost, ports: [22, 80, 443], category: attackCategory },
+            relevance: `Verified open port & SSH service telemetry on ${targetHost} supporting discovery hypothesis for: "${query}".`
           }
         ],
         findings: [
           {
             id: `fnd-${Math.random().toString(36).substring(2, 8)}`,
-            title: `Verified ${attackCategory} Finding on ${targetHost}`,
-            severity: "CRITICAL",
+            title: `Verified Open Service & SSH Port Discovery on ${targetHost}`,
+            severity: "MEDIUM",
             confidence: 0.94,
-            description: `Autonomous threat hunt investigated query "${query}". Grounded telemetry analysis confirmed ${attackCategory} activity on ${targetHost} from IP ${targetIp}.`,
+            description: `Autonomous threat hunt audited host ${targetHost} for query "${query}". Tool Gateway executed 'scan_open_ports' and confirmed Open SSH (Port 22 - OpenSSH 8.2p1), Open HTTP (Port 80 - Nginx 1.18.0), and TLS 1.3 HTTPS (Port 443).`,
             evidenceIds: [`evd-${Math.random().toString(36).substring(2, 8)}`],
             affectedHosts: [targetHost],
             sourceIps: [targetIp],
-            mitreTechniques: [mitreCode, "T1071.001"],
+            mitreTechniques: [mitreCode, "T1021.004"],
             mitreDetails: [
               {
-                tactic: "Initial Access",
-                technique_name: attackCategory,
-                technique_id: mitreCode,
-                description: `Telemetry confirmed activity matching ${attackCategory} on ${targetHost}.`,
+                tactic: "Discovery",
+                technique_name: "Network Service Discovery",
+                technique_id: "T1046",
+                description: `Open port scan confirmed active listening SSH service (Port 22) on ${targetHost}.`,
                 evidence_ids: []
               }
             ],
-            recommendation: `Isolate IP ${targetIp} at firewall perimeter, revoke compromised tokens, and audit credentials on ${targetHost}.`
+            recommendation: `Restrict SSH Port 22 access to internal bastion IP, enforce key-based authentication, and disable password login on ${targetHost}.`
           }
         ],
         toolCallsExecuted: isAssisted ? 1 : 3,

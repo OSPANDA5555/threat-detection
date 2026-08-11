@@ -17,17 +17,18 @@ def test_health_endpoint():
     data = response.json()
     assert data["status"] == "HEALTHY"
     assert data["tool_gateway"]["status"] == "ACTIVE"
-    assert data["tool_gateway"]["registered_tools_count"] == 9
+    assert data["tool_gateway"]["registered_tools_count"] == 10
     assert data["tool_gateway"]["enforce_read_only"] is True
 
 def test_list_tools_endpoint():
     response = client.get("/api/v1/tools")
     assert response.status_code == 200
     tools = response.json()
-    assert len(tools) == 9
+    assert len(tools) == 10
     tool_names = [t["name"] for t in tools]
     assert "search_authentication_events" in tool_names
     assert "get_host_timeline" in tool_names
+    assert "scan_open_ports" in tool_names
 
 def test_sample_hunt_endpoint():
     response = client.get("/api/v1/hunts/sample")

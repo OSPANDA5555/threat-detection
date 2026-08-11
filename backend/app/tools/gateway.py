@@ -253,4 +253,34 @@ class ToolGateway:
             events = telemetry_engine.query_events(flt)
             return [evt.model_dump() for evt in events if evt.status == "FAILURE" or evt.status == "DENIED"]
 
+        # Open port & SSH scanner query
+        elif tool_name == "scan_open_ports":
+            target_host = args.get("host", "web-server-01")
+            port_profiles = {
+                "web-server-01": [
+                    {"port": 22, "service": "SSH", "status": "OPEN", "protocol": "TCP", "version": "OpenSSH 8.2p1 Ubuntu 4ubuntu0.5", "banner": "SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.5", "risk_level": "INFO"},
+                    {"port": 80, "service": "HTTP", "status": "OPEN", "protocol": "TCP", "version": "nginx/1.18.0", "banner": "HTTP/1.1 200 OK", "risk_level": "LOW"},
+                    {"port": 443, "service": "HTTPS", "status": "OPEN", "protocol": "TCP", "version": "nginx/1.18.0 (TLS v1.3)", "banner": "HTTP/1.1 200 OK", "risk_level": "LOW"}
+                ],
+                "db-server-01": [
+                    {"port": 22, "service": "SSH", "status": "OPEN", "protocol": "TCP", "version": "OpenSSH 8.2p1 Ubuntu 4ubuntu0.5", "banner": "SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.5", "risk_level": "INFO"},
+                    {"port": 5432, "service": "PostgreSQL", "status": "OPEN", "protocol": "TCP", "version": "PostgreSQL 14.5", "banner": "PostgreSQL 14.5 Database Engine", "risk_level": "MEDIUM"}
+                ],
+                "jump-host-01": [
+                    {"port": 22, "service": "SSH", "status": "OPEN", "protocol": "TCP", "version": "OpenSSH 8.2p1 Restricted Bastion", "banner": "SSH-2.0-OpenSSH_8.2p1 Bastion", "risk_level": "INFO"}
+                ],
+                "workstation-01": [
+                    {"port": 22, "service": "SSH", "status": "CLOSED", "protocol": "TCP", "version": "N/A", "banner": "Connection Refused", "risk_level": "SAFE"},
+                    {"port": 8080, "service": "HTTP-ALT", "status": "OPEN", "protocol": "TCP", "version": "Internal Python Dev Server", "banner": "BaseHTTP/0.6 Python/3.9", "risk_level": "MEDIUM"}
+                ],
+                "workstation-02": [
+                    {"port": 22, "service": "SSH", "status": "CLOSED", "protocol": "TCP", "version": "N/A", "banner": "Connection Refused", "risk_level": "SAFE"}
+                ]
+            }
+            results = port_profiles.get(target_host, [
+                {"port": 22, "service": "SSH", "status": "OPEN", "protocol": "TCP", "version": "OpenSSH 8.2p1", "banner": "SSH-2.0-OpenSSH_8.2p1", "risk_level": "INFO"}
+            ])
+            return results[:limit]
+
         return []
+
