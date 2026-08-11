@@ -106,7 +106,7 @@ export default function SecurityPanel() {
         {/* 2. PROMPT INJECTION DEFENSE */}
         <div className="soc-card" style={{ borderLeft: '4px solid var(--accent-blue)' }}>
           <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.04em' }}>PROMPT INJECTION DEFENSE</span>
-          <div style={{ fontSize: '1.6rem', fontWeight 900, color: '#fafafa', marginTop: '4px' }}>
+          <div style={{ fontSize: '1.6rem', fontWeight: 900, color: '#fafafa', marginTop: '4px' }}>
             {metrics.promptInjectionDefenseScorePercent}%
           </div>
           <span style={{ fontSize: '0.72rem', color: 'var(--accent-blue)' }}>Detection & Data Labeling</span>
@@ -114,7 +114,7 @@ export default function SecurityPanel() {
 
         {/* 3. TOOL POLICY VIOLATIONS */}
         <div className="soc-card" style={{ borderLeft: '4px solid var(--status-red)' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight 700, color: 'var(--text-dim)', letterSpacing: '0.04em' }}>TOOL POLICY VIOLATIONS</span>
+          <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.04em' }}>TOOL POLICY VIOLATIONS</span>
           <div style={{ fontSize: '1.6rem', fontWeight: 900, color: metrics.toolPolicyViolationsCount === 0 ? '#4ade80' : '#f87171', marginTop: '4px' }}>
             {metrics.toolPolicyViolationsCount}
           </div>
@@ -123,7 +123,7 @@ export default function SecurityPanel() {
 
         {/* 4. EVIDENCE GROUNDING SCORE */}
         <div className="soc-card" style={{ borderLeft: '4px solid var(--status-purple)' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight 700, color: 'var(--text-dim)', letterSpacing: '0.04em' }}>EVIDENCE GROUNDING</span>
+          <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.04em' }}>EVIDENCE GROUNDING</span>
           <div style={{ fontSize: '1.6rem', fontWeight: 900, color: '#fafafa', marginTop: '4px' }}>
             {metrics.evidenceGroundingScorePercent}%
           </div>
