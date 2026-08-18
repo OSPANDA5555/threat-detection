@@ -1,5 +1,8 @@
+import os
 import logging
 import json
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from typing import Dict, Any
 
@@ -39,4 +42,26 @@ class AuditLogger:
             "error": error_message
         }
         audit_logger.info(json.dumps(audit_entry))
+
+        # Stream to dedicated log_storage container if configured
+        log_storage_url = os.getenv("LOG_STORAGE_URL")
+        if log_storage_url:
+            try:
+                payload = json.dumps({
+                    "event_type": "TOOL_GATEWAY_EXECUTION",
+                    "host": arguments.get("host", "system"),
+                    "user": arguments.get("user", "ai-hunter"),
+                    "status": status,
+                    "details": audit_entry
+                }).encode("utf-8")
+
+                req = urllib.request.Request(
+                    log_storage_url,
+                    data=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                urllib.request.urlopen(req, timeout=1.0)
+            except Exception:
+                pass  # Non-blocking log streaming fallback
+
         return audit_entry
