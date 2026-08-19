@@ -441,7 +441,7 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
         </div>
 
         {/* AI EXPLANATION & REASONING CARD */}
-        <AIExplanationCard currentHunt={currentHunt} />
+        <AIExplanationCard currentHunt={currentHunt} onSelectEvidenceId={handleSelectEvidenceId} />
 
         {/* EVIDENCE-BACKED FINDINGS CARD */}
         <div className="soc-card" style={{ borderLeft: '4px solid var(--status-red)' }}>
@@ -512,8 +512,10 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
         selectedEvidence={selectedEvidence}
         timelineEvents={timelineEvents}
         onSelectEvidenceId={handleSelectEvidenceId}
+        onClose={() => setSelectedEvidence(null)}
       />
 
     </div>
   );
 }
+
