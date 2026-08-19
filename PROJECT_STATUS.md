@@ -1,8 +1,9 @@
 # PROJECT STATUS — AUTONOMOUS THREAT-HUNTING COPILOT
 
 > **Final Portfolio Release Status**: ✅ **100% COMPLETE & VERIFIED**  
-> **Repository Path**: `/Users/os/.gemini/antigravity/scratch/threat-hunting-copilot`  
+> **Repository**: `https://github.com/OSPANDA5555/threat-detection`  
 > **Automated Test Suite**: **38 / 38 Pytest Unit Tests Passing** (0.88s execution time)
+
 
 ---
 
