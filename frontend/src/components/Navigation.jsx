@@ -14,7 +14,7 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
 
   const isHealthy = healthData?.status === 'HEALTHY';
   const huntId = activeHunt?.id ? `HUNT #${activeHunt.id.split('-').pop().toUpperCase()}` : 'HUNT #00042';
-  const huntTitle = activeHunt?.question ? activeHunt.question.toUpperCase() : 'SSH COMPROMISE INVESTIGATION';
+  const huntTitle = activeHunt?.question ? activeHunt.question : 'Find evidence of suspicious SSH activity on web-server-01.';
   const confidence = activeHunt?.confidence ? `${Math.round(activeHunt.confidence * 100)}%` : '78%';
   const status = activeHunt?.status || 'COMPLETED';
 
@@ -36,40 +36,56 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
       position: 'sticky',
       top: 0,
       zIndex: 100,
-      backdropFilter: 'blur(12px)'
+      backdropFilter: 'blur(16px)'
     }}>
-      {/* Top SOC Status & Telemetry Header */}
+      {/* Spacious SOC Operational Header */}
       <div style={{
         borderBottom: '1px solid var(--border-subtle)',
-        padding: '10px 28px',
+        padding: '14px 32px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         background: '#040406'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
+        {/* Left: Brand Identity & Active Hunt Tag */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Shield size={20} color="var(--accent-blue)" />
-            <span style={{ fontSize: '0.82rem', fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'var(--accent-blue)', letterSpacing: '0.06em' }}>
+            <div style={{
+              background: 'var(--accent-blue-subtle)',
+              border: '1px solid rgba(59, 130, 246, 0.4)',
+              padding: '6px 10px',
+              borderRadius: 'var(--radius-sm)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <Shield size={18} color="var(--accent-blue)" />
+              <span style={{ fontSize: '0.82rem', fontFamily: 'var(--font-mono)', fontWeight: 800, color: '#f8fafc', letterSpacing: '0.04em' }}>
+                THREAT COPILOT
+              </span>
+            </div>
+            <span className="badge badge-info" style={{ fontFamily: 'var(--font-mono)' }}>
               {huntId}
             </span>
           </div>
-          <div style={{ height: '16px', width: '1px', background: 'var(--border-color)' }} />
-          <h1 style={{ fontSize: '0.92rem', fontWeight: 800, color: '#f8fafc', letterSpacing: '-0.01em' }}>
-            {huntTitle}
-          </h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span className={`badge ${status === 'EXECUTING' || status === 'AWAITING_APPROVAL' ? 'badge-warning' : 'badge-success'}`}>
-              STATUS: {status}
+
+          <div style={{ height: '18px', width: '1px', background: 'var(--border-color)' }} />
+
+          {/* Active Query Title */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#e2e8f0', maxWidth: '380px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {huntTitle}
             </span>
-            <span className="badge badge-info">
-              CONFIDENCE: {confidence}
+            <span className={`badge ${status === 'EXECUTING' || status === 'AWAITING_APPROVAL' ? 'badge-warning' : 'badge-success'}`}>
+              {status}
             </span>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          {/* UTC Clock & System Metric */}
+        {/* Right: Mode Selector & Gateway Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
+          
+          {/* UTC Clock & System Latency */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
               <Clock size={13} color="var(--accent-blue)" />
@@ -78,11 +94,11 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
             <div style={{ height: '12px', width: '1px', background: 'var(--border-color)' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
               <Cpu size={13} color="var(--status-green)" />
-              <span style={{ color: 'var(--text-muted)' }}>0.4ms GATEWAY</span>
+              <span style={{ color: 'var(--text-muted)' }}>0.4ms</span>
             </div>
           </div>
 
-          {/* Dual Mode Selector Toggle */}
+          {/* Dual Mode Toggle */}
           <div style={{ display: 'flex', background: 'var(--bg-subtle)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', padding: '2px' }}>
             <button
               onClick={() => setExecutionMode('AUTONOMOUS')}
@@ -95,12 +111,11 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
                 fontWeight: 800,
                 display: 'flex',
                 alignItems: 'center',
-                gap: '5px',
-                boxShadow: executionMode === 'AUTONOMOUS' ? '0 0 10px rgba(59,130,246,0.3)' : 'none'
+                gap: '5px'
               }}
             >
               <Zap size={12} />
-              AUTONOMOUS MODE
+              AUTONOMOUS
             </button>
             <button
               onClick={() => setExecutionMode('ASSISTED')}
@@ -113,12 +128,11 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
                 fontWeight: 800,
                 display: 'flex',
                 alignItems: 'center',
-                gap: '5px',
-                boxShadow: executionMode === 'ASSISTED' ? '0 0 10px rgba(245,158,11,0.3)' : 'none'
+                gap: '5px'
               }}
             >
               <UserCheck size={12} />
-              ASSISTED MODE
+              ASSISTED
             </button>
           </div>
 
@@ -129,35 +143,47 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
               color: '#ffffff',
               padding: '6px 14px',
               borderRadius: 'var(--radius-sm)',
-              fontSize: '0.8rem',
+              fontSize: '0.78rem',
               fontWeight: 800,
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              boxShadow: '0 0 12px var(--accent-blue-glow)'
+              gap: '6px'
             }}
           >
-            <Download size={14} />
+            <Download size={13} />
             EXPORT REPORT
           </button>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', fontWeight: 700, color: isHealthy ? 'var(--status-green)' : 'var(--status-red)' }}>
-            <span className="pulse-dot" style={{ background: isHealthy ? 'var(--status-green)' : 'var(--status-red)' }} />
-            {isHealthy ? 'GATEWAY ONLINE' : 'DISCONNECTED'}
+          {/* Gateway Status Badge */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '0.74rem',
+            fontWeight: 700,
+            color: isHealthy ? 'var(--status-green)' : 'var(--status-red)',
+            background: isHealthy ? 'var(--status-green-subtle)' : 'var(--status-red-subtle)',
+            border: isHealthy ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+            padding: '4px 10px',
+            borderRadius: 'var(--radius-sm)'
+          }}>
+            <span className="pulse-dot" style={{ background: isHealthy ? 'var(--status-green)' : 'var(--status-red)', width: '6px', height: '6px' }} />
+            {isHealthy ? 'GATEWAY ONLINE' : 'OFFLINE'}
           </div>
+
         </div>
       </div>
 
-      {/* Main Navigation Tabs */}
+      {/* Main Navigation Bar */}
       <div style={{
         maxWidth: '1800px',
         margin: '0 auto',
-        padding: '0 28px',
+        padding: '0 24px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between'
       }}>
-        <nav style={{ display: 'flex', gap: '4px' }}>
+        <nav style={{ display: 'flex', gap: '6px' }}>
           {navItems.map(item => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -169,16 +195,17 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
-                  padding: '14px 20px',
-                  fontSize: '0.84rem',
+                  padding: '12px 16px',
+                  fontSize: '0.82rem',
                   fontWeight: isActive ? 800 : 600,
                   color: isActive ? '#f8fafc' : 'var(--text-dim)',
-                  background: 'transparent',
+                  background: isActive ? 'rgba(59, 130, 246, 0.08)' : 'transparent',
                   borderBottom: isActive ? '3px solid var(--accent-blue)' : '3px solid transparent',
+                  borderRadius: 'var(--radius-sm) var(--radius-sm) 0 0',
                   transition: 'all 0.15s ease'
                 }}
               >
-                <Icon size={16} color={isActive ? 'var(--accent-blue)' : 'var(--text-dim)'} />
+                <Icon size={15} color={isActive ? 'var(--accent-blue)' : 'var(--text-dim)'} />
                 {item.label}
               </button>
             );
