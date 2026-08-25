@@ -282,5 +282,23 @@ class ToolGateway:
             ])
             return results[:limit]
 
+        # Multi-workstation and cross-log collector query
+        elif tool_name == "collect_workstation_telemetry":
+            hosts_arg = args.get("hosts", "all")
+            sources_arg = args.get("log_sources", "auth,process,network")
+            indicator_arg = args.get("indicator")
+            
+            hosts_list = [h.strip() for h in hosts_arg.split(",") if h.strip()] if isinstance(hosts_arg, str) else hosts_arg
+            sources_list = [s.strip() for s in sources_arg.split(",") if s.strip()] if isinstance(sources_arg, str) else sources_arg
+            
+            collected_data = telemetry_engine.collect_cross_workstation_telemetry(
+                hosts=hosts_list,
+                log_sources=sources_list,
+                indicator=indicator_arg,
+                limit=limit
+            )
+            return collected_data.get("events", [])
+
         return []
+
 

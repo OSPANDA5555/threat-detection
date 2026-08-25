@@ -118,3 +118,39 @@ def test_telemetry_rest_api_endpoints():
     assert report["scenarioId"] == "ssh-bruteforce"
     assert "precision" in report
     assert "recall" in report
+
+def test_cross_workstation_telemetry_collection():
+    # 1. Direct engine collection
+    collected = telemetry_engine.collect_cross_workstation_telemetry(
+        hosts=["workstation-01", "jump-host-01", "web-server-01"],
+        log_sources=["auth", "network", "process"],
+        limit=50
+    )
+    assert collected["total_events_collected"] > 0
+    assert "workstations_ingested" in collected
+    assert "log_sources_aggregated" in collected
+    assert "anomalies" in collected
+
+    # 2. REST API endpoint POST /api/v1/telemetry/collect
+    res_coll = client.post("/api/v1/telemetry/collect", json={
+        "hosts": ["workstation-01", "web-server-01"],
+        "log_sources": ["auth", "process"],
+        "limit": 30
+    })
+    assert res_coll.status_code == 200
+    data = res_coll.json()
+    assert data["total_events_collected"] > 0
+    assert len(data["events"]) <= 30
+
+def test_workstation_inventory_endpoint():
+    res_inv = client.get("/api/v1/telemetry/workstations")
+    assert res_inv.status_code == 200
+    inventory = res_inv.json()
+    assert len(inventory) == 5
+    hostnames = [h["hostname"] for h in inventory]
+    assert "workstation-01" in hostnames
+    assert "workstation-02" in hostnames
+    assert "web-server-01" in hostnames
+    assert "db-server-01" in hostnames
+    assert "jump-host-01" in hostnames
+

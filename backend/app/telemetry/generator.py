@@ -96,6 +96,100 @@ class TelemetryGenerator:
         limit = min(filter_spec.limit, 500)
         return results[:limit]
 
+    def collect_cross_workstation_telemetry(
+        self,
+        hosts: Optional[List[str]] = None,
+        log_sources: Optional[List[str]] = None,
+        indicator: Optional[str] = None,
+        limit: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Collects, aggregates and correlates security telemetry across multiple workstations and log sources.
+        """
+        target_hosts = set([h.strip().lower() for h in hosts if h.strip()]) if hosts and "all" not in [h.lower() for h in hosts] else set(SYNTHETIC_HOSTS.keys())
+        target_sources = set([s.strip().lower() for s in log_sources if s.strip()]) if log_sources else {"auth", "process", "network", "dns", "file", "web_access"}
+
+        matched_events = []
+        workstation_event_counts = {h: 0 for h in SYNTHETIC_HOSTS.keys()}
+        log_source_counts = {s: 0 for s in ["auth", "process", "network", "dns", "file"]}
+        anomalies = []
+
+        for evt in self._events:
+            # Match host
+            matched_host = next((h for h in target_hosts if h in evt.host.lower()), None)
+            if not matched_host:
+                continue
+
+            # Match log source / event type
+            evt_src = evt.eventType.value if hasattr(evt.eventType, "value") else str(evt.eventType)
+            if not any(src in evt_src.lower() for src in target_sources):
+                continue
+
+            # Match optional indicator (IP, user, process, domain, hash)
+            if indicator:
+                ind_lower = indicator.lower()
+                has_match = (
+                    (evt.sourceIp and ind_lower in evt.sourceIp.lower()) or
+                    (evt.destinationIp and ind_lower in evt.destinationIp.lower()) or
+                    (evt.user and ind_lower in evt.user.lower()) or
+                    (evt.host and ind_lower in evt.host.lower()) or
+                    (evt.action and ind_lower in evt.action.lower()) or
+                    any(ind_lower in str(v).lower() for v in evt.metadata.values())
+                )
+                if not has_match:
+                    continue
+
+            matched_events.append(evt)
+            workstation_event_counts[matched_host] = workstation_event_counts.get(matched_host, 0) + 1
+            if evt_src in log_source_counts:
+                log_source_counts[evt_src] += 1
+
+            # Check for cross-workstation anomalous indicators
+            if evt.status in ["FAILURE", "DENIED"] or (evt.sourceIp and evt.sourceIp.startswith("192.168.100.")) or (evt.destinationIp and evt.destinationIp.startswith("198.51.100.")):
+                anomalies.append({
+                    "eventId": evt.eventId,
+                    "host": evt.host,
+                    "eventType": evt_src,
+                    "action": evt.action,
+                    "timestamp": evt.timestamp,
+                    "reason": f"Anomalous {evt.status} event on {evt.host} with endpoint {evt.sourceIp or evt.destinationIp}"
+                })
+
+        return {
+            "total_events_collected": len(matched_events[:limit]),
+            "workstations_ingested": list(target_hosts),
+            "log_sources_aggregated": list(target_sources),
+            "workstation_event_counts": workstation_event_counts,
+            "log_source_counts": log_source_counts,
+            "anomalies_detected_count": len(anomalies),
+            "anomalies": anomalies[:10],
+            "events": [evt.model_dump() for evt in matched_events[:limit]]
+        }
+
+    def get_workstation_inventory(self) -> List[Dict[str, Any]]:
+        """Return enterprise workstation and host inventory with operational metadata."""
+        roles = {
+            "web-server-01": {"role": "DMZ Web Application Server", "os": "Ubuntu 22.04 LTS", "subnets": "10.0.1.0/24", "log_agents": ["Auditd", "Sysmon-Linux", "Nginx-Access", "Suricata"]},
+            "db-server-01": {"role": "Core Relational Database", "os": "RHEL 9.2 Enterprise", "subnets": "10.0.1.0/24", "log_agents": ["PostgreSQL-Audit", "Auditd", "CoreDNS"]},
+            "workstation-01": {"role": "Executive / HR Workstation", "os": "Windows 11 Enterprise", "subnets": "10.0.1.0/24", "log_agents": ["Sysmon-Win", "Windows-EventLog-Security", "CrowdStrike-EDR"]},
+            "workstation-02": {"role": "DevOps Engineering Endpoint", "os": "Ubuntu 22.04 LTS Desktop", "subnets": "10.0.1.0/24", "log_agents": ["Auditd", "Docker-Daemon-Logs", "Sysmon-Linux"]},
+            "jump-host-01": {"role": "Secured Admin Bastion Jump Host", "os": "Debian 12 Hardened", "subnets": "10.0.1.0/24", "log_agents": ["OpenSSH-Audit", "Sudoers-PAM", "Auditd"]}
+        }
+        return [
+            {
+                "hostname": host,
+                "ip_address": ip,
+                "status": "ONLINE",
+                "role": roles.get(host, {}).get("role", "Endpoint"),
+                "os": roles.get(host, {}).get("os", "Linux 5.15"),
+                "subnet": roles.get(host, {}).get("subnets", "10.0.1.0/24"),
+                "log_agents": roles.get(host, {}).get("log_agents", ["Auditd", "Sysmon"]),
+                "last_heartbeat": datetime.now(timezone.utc).isoformat()
+            }
+            for host, ip in SYNTHETIC_HOSTS.items()
+        ]
+
+
     def _generate_dataset(self):
         """Build full synthetic dataset including benign activity and 8 attack scenarios."""
         base_time = datetime.now(timezone.utc) - timedelta(hours=4)

@@ -16,8 +16,8 @@ export default function SystemHealth({ healthData }) {
     { name: "search_file_events", desc: "Search file system modification & SHA256 hashes", read_only: true, max_cap: 500, default_args: '{"host": "web-server-01", "action": "MODIFY", "limit": 10}' },
     { name: "get_host_timeline", desc: "Retrieve unified event timeline for a host", read_only: true, max_cap: 500, default_args: '{"host": "web-server-01", "time_window_hours": 24}' },
     { name: "get_ip_activity", desc: "Summarize network/auth activity for an IP", read_only: true, max_cap: 500, default_args: '{"ip": "192.168.100.99", "limit": 10}' },
-    { name: "get_domain_activity", desc: "Fetch resolution count & query volume for a domain", read_only: true, max_cap: 500, default_args: '{"domain": "c2-stealth.org", "limit": 10}' },
-    { name: "get_alerts", desc: "Query existing SIEM/EDR alert telemetry", read_only: true, max_cap: 500, default_args: '{"host": "web-server-01", "severity": "HIGH"}' }
+    { name: "get_alerts", desc: "Query existing SIEM/EDR alert telemetry", read_only: true, max_cap: 500, default_args: '{"host": "web-server-01", "severity": "HIGH"}' },
+    { name: "collect_workstation_telemetry", desc: "Aggregate & correlate logs across multiple workstations", read_only: true, max_cap: 500, default_args: '{"hosts": "workstation-01,web-server-01", "log_sources": "auth,process,network", "limit": 25}' }
   ];
 
   const handleSelectTool = (toolName) => {

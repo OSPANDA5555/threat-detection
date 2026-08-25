@@ -7,6 +7,7 @@ import AIExplanationCard from './AIExplanationCard';
 const SCENARIO_QUERIES = {
   "ssh-bruteforce": "Find evidence of suspicious SSH password brute force activity on web-server-01.",
   "port-ssh-scan": "Scan open SSH ports, active listening services, and banners across host web-server-01.",
+  "cross-workstation-collect": "Collect and correlate logs across all workstations (workstation-01, workstation-02, web-server-01, db-server-01) and find evidence of lateral movement.",
   "credential-compromise": "Investigate stolen credential access and unauthorized SSH logins on web-server-01.",
   "privilege-escalation": "Detect privilege escalation and sudo GTFOBins root shell execution on web-server-01.",
   "network-recon": "Search for internal network reconnaissance and port scanning from workstation-01.",
@@ -59,7 +60,15 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
       let primaryTool = "search_authentication_events";
       let step1Summary = `Found 40 SSH password failure events originating from IP ${targetIp}.`;
 
-      if (qLower.includes("port") || qLower.includes("open") || qLower.includes("banner")) {
+      if (qLower.includes("collect") || qLower.includes("workstation") || qLower.includes("fleet") || qLower.includes("different log")) {
+        targetHost = "workstation-01,workstation-02,jump-host-01,web-server-01,db-server-01";
+        targetIp = "10.0.1.50";
+        attackCategory = "Cross-Workstation Fleet Telemetry Collection & Lateral Movement Correlation";
+        mitreCode = "T1021.004";
+        eventType = "CROSS_WORKSTATION_COLLECT";
+        primaryTool = "collect_workstation_telemetry";
+        step1Summary = "Aggregated 120+ events across 5 enterprise workstations (workstation-01, workstation-02, jump-host-01, web-server-01, db-server-01) spanning Auth, Process, and Network flow logs.";
+      } else if (qLower.includes("port") || qLower.includes("open") || qLower.includes("banner")) {
         targetHost = "web-server-01";
         targetIp = "192.168.100.99";
         attackCategory = "Network Service Discovery & Open SSH Port Audit";
