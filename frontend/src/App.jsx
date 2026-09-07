@@ -11,6 +11,7 @@ import ExecutiveReportModal from './components/ExecutiveReportModal';
 
 import InvestigationGraph from './components/InvestigationGraph';
 import SecurityPanel from './components/SecurityPanel';
+import DatasetImport from './components/DatasetImport';
 
 export const FALLBACK_SAMPLE_HUNT = {
   id: "hunt-demo-ssh-01",
@@ -240,12 +241,17 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'datasets' && (
+          <DatasetImport />
+        )}
+
         {activeTab === 'graph' && (
           <InvestigationGraph
             activeHunt={sampleHunt}
             onSelectEvidenceId={(eid) => setActiveTab('evidence')}
           />
         )}
+
 
 
         {activeTab === 'security' && (

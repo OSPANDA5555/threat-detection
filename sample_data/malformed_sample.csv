@@ -1,0 +1,6 @@
+Source IP, Source Port, Destination IP, Destination Port, Protocol, Timestamp, Flow Duration, Total Length of Fwd Packets, Total Length of Bwd Packets, Label
+192.168.10.5, 49152, 192.168.10.50, 22, 6, 07/07/2017 08:30:00, 45000, 1280, 4200, SSH-Patator
+999.999.999.999, 49154, 192.168.10.50, 22, 6, 07/07/2017 08:30:15, 38000, 960, 2400, Malformed-IP-Row
+192.168.10.8, 99999, 192.168.10.50, 80, 6, 07/07/2017 08:45:00, 120000, 45000, 89000, Malformed-Port-Row
+192.168.10.14, 52100, 192.168.10.50, 80, 6, , 85000, 3200, 1400, Missing-Timestamp-Row
+192.168.10.25, 48200, 192.168.10.50, 443, 6, 07/07/2017 09:30:00, 210000, 18500, 45000, BENIGN

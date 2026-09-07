@@ -235,10 +235,150 @@ async def get_workstation_inventory():
     from app.telemetry.generator import telemetry_engine
     return telemetry_engine.get_workstation_inventory()
 
+# ==========================================
+# DATASET INGESTION & NORMALIZATION ROUTES
+# ==========================================
+from fastapi import UploadFile, File, Form
+from typing import Optional
+from app.schemas.dataset import (
+    NormalizedEvent,
+    DatasetMetadata,
+    DatasetImportReport,
+    DatasetQueryFilter
+)
+from app.ingestion.service import dataset_service
+
+class RawDatasetImportRequest(BaseModel):
+    content: str
+    file_name: str
+    dataset_name: Optional[str] = None
+    format_hint: Optional[str] = None
+
+@app.post(f"{settings.API_V1_STR}/datasets/import/file", response_model=DatasetImportReport, tags=["Dataset Ingestion"])
+async def import_dataset_file(
+    file: UploadFile = File(...),
+    dataset_name: Optional[str] = Form(None),
+    format_hint: Optional[str] = Form(None)
+) -> DatasetImportReport:
+    """
+    Import and normalize cybersecurity datasets (CIC-IDS2017 CSV, NetFlow, JSON events, or PCAP).
+    """
+    file_bytes = await file.read()
+    return dataset_service.import_dataset(
+        content=file_bytes,
+        file_name=file.filename,
+        dataset_name=dataset_name,
+        format_hint=format_hint
+    )
+
+@app.post(f"{settings.API_V1_STR}/datasets/import/raw", response_model=DatasetImportReport, tags=["Dataset Ingestion"])
+async def import_raw_dataset(req: RawDatasetImportRequest) -> DatasetImportReport:
+    """
+    Import and normalize dataset from raw text / payload string.
+    """
+    return dataset_service.import_dataset(
+        content=req.content.encode("utf-8"),
+        file_name=req.file_name,
+        dataset_name=req.dataset_name,
+        format_hint=req.format_hint
+    )
+
+@app.post(f"{settings.API_V1_STR}/datasets/sample/load", response_model=DatasetImportReport, tags=["Dataset Ingestion"])
+async def load_bundled_sample_dataset() -> DatasetImportReport:
+    """
+    Load bundled benchmark CIC-IDS2017 sample dataset into the platform.
+    """
+    import os
+    sample_path = "sample_data/cic_ids2017_sample.csv"
+    if os.path.exists(sample_path):
+        with open(sample_path, "rb") as f:
+            content = f.read()
+        return dataset_service.import_dataset(
+            content=content,
+            file_name="cic_ids2017_sample.csv",
+            dataset_name="CIC-IDS2017 Benchmark Flow Sample"
+        )
+    else:
+        # Fallback inline
+        dataset_service._preload_samples()
+        ds = dataset_service.list_datasets()
+        return DatasetImportReport(
+            dataset=ds[0] if ds else DatasetMetadata(dataset_name="CIC-IDS2017 Sample", file_name="sample.csv"),
+            status="SUCCESS",
+            message="Loaded default sample dataset."
+        )
+
+@app.get(f"{settings.API_V1_STR}/datasets", response_model=List[DatasetMetadata], tags=["Dataset Ingestion"])
+async def list_imported_datasets() -> List[DatasetMetadata]:
+    """
+    List all imported datasets and their normalization metadata.
+    """
+    return dataset_service.list_datasets()
+
+@app.get(f"{settings.API_V1_STR}/datasets/{{dataset_id}}", response_model=DatasetMetadata, tags=["Dataset Ingestion"])
+async def get_dataset_metadata(dataset_id: str) -> DatasetMetadata:
+    """
+    Get metadata, statistics, and validation errors for a specific dataset.
+    """
+    ds = dataset_service.get_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
+    return ds
+
+@app.get(f"{settings.API_V1_STR}/datasets/{{dataset_id}}/events", tags=["Dataset Ingestion"])
+async def query_dataset_events(
+    dataset_id: str,
+    label: Optional[str] = None,
+    source_ip: Optional[str] = None,
+    destination_ip: Optional[str] = None,
+    destination_port: Optional[int] = None,
+    protocol: Optional[str] = None,
+    is_malicious: Optional[bool] = None,
+    offset: int = 0,
+    limit: int = 50
+):
+    """
+    Query normalized events from an imported dataset with filtering and pagination.
+    """
+    ds = dataset_service.get_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
+    
+    flt = DatasetQueryFilter(
+        label=label,
+        source_ip=source_ip,
+        destination_ip=destination_ip,
+        destination_port=destination_port,
+        protocol=protocol,
+        is_malicious=is_malicious,
+        offset=offset,
+        limit=limit
+    )
+    events, total = dataset_service.get_dataset_events(dataset_id, flt)
+    return {
+        "dataset_id": dataset_id,
+        "dataset_name": ds.dataset_name,
+        "total_matching": total,
+        "offset": offset,
+        "limit": limit,
+        "events": [evt.model_dump() for evt in events]
+    }
+
+@app.delete(f"{settings.API_V1_STR}/datasets/{{dataset_id}}", tags=["Dataset Ingestion"])
+async def delete_imported_dataset(dataset_id: str):
+    """
+    Delete an imported dataset and its normalized records.
+    """
+    deleted = dataset_service.delete_dataset(dataset_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
+    return {"status": "SUCCESS", "message": f"Dataset '{dataset_id}' removed successfully."}
+
 class EvaluateRequest(BaseModel):
     scenario_id: str = Field(max_length=200)
     finding: Finding
     evidence_list: List[Evidence] = Field(default_factory=list, max_length=500)
+
 
 
 @app.post(f"{settings.API_V1_STR}/telemetry/evaluate", response_model=EvaluationReport, tags=["Evaluation Engine"])

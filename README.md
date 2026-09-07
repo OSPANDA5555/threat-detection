@@ -24,6 +24,7 @@ Unlike generic LLM chatbots or unconstrained AI agents, this platform enforces a
                │   • Autonomous Hunting State Engine             │
                │   • Prompt Injection Detector & Sanitizer       │
                │   • Evaluation Lab & Ground Truth Harness       │
+               │   • Dataset Ingestion & Normalization Engine    │
                │   • Indicator Graph Builder (IP→USER→HOST...)   │
                └────────────────────────┬────────────────────────┘
                                         │ Strict Parameter Validation
@@ -38,20 +39,97 @@ Unlike generic LLM chatbots or unconstrained AI agents, this platform enforces a
         └────────────────┘  └──────────────┘  └────────────────┘
 ```
 
-### Architecture Overview (Mermaid)
+---
 
-```mermaid
-graph TD
-    UI[SOC Analyst Interface] -->|Analyst Question| Engine[Autonomous Hunting Engine]
-    Engine -->|1. Form Hypothesis| Hypo[Hypothesis State]
-    Engine -->|2. Formulate Structured Plan| Plan[JSON Hunt Plan]
-    Engine -->|3. Request Tool Call| Gate[Zero-Trust Tool Gateway]
-    Gate -->|4. Validate Schema & Parameters| Telemetry[Synthetic Security Telemetry]
-    Telemetry -->|5. Return Read-Only Events| Gate
-    Gate -->|6. Wrap Untrusted Payload| Engine
-    Engine -->|7. Correlate Evidence| Evidence[Evidence Store]
-    Evidence -->|8. Grounded Finding| UI
-    Evidence -->|9. Compare against Ground Truth| Lab[Evaluation Lab]
+## 📦 Real Cybersecurity Dataset Ingestion & Normalization
+
+The platform includes a dedicated **Dataset Ingestion Module** designed to import, validate, normalize, and explore real cybersecurity telemetry, network flows, and packet captures.
+
+### Supported Ingestion Formats:
+1. **CIC-IDS2017 & NetFlow/IPFIX (CSV)**:
+   - Ingests standard Canadian Institute for Cybersecurity (CIC-IDS2017) flow CSVs and general network flow logs.
+   - Automatically handles whitespace-padded headers (` Source IP`, ` Flow Duration`, ` Label`, etc.).
+   - Converts microsecond flow durations to seconds and maps numeric protocols (`6` -> `TCP`, `17` -> `UDP`, `1` -> `ICMP`).
+2. **JSON Event Telemetry (JSON / JSONL)**:
+   - Ingests structured event logs, SIEM streams, and EDR authentication records.
+3. **PCAP Packet Captures (Libpcap)**:
+   - Safely parses raw PCAP binary files using pure-Python unpacking to extract layer-3/4 packet flows and byte counters.
+
+---
+
+### 📋 Normalized Internal Event Schema
+
+Every imported record is normalized into the following standardized schema:
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `timestamp` | `string (ISO-8601)` | Standardized UTC event timestamp. |
+| `source_ip` | `string \| null` | Validated source IPv4 or IPv6 address. |
+| `source_port` | `integer \| null` | Source port (0–65535). |
+| `destination_ip` | `string \| null` | Validated destination IPv4 or IPv6 address. |
+| `destination_port` | `integer \| null` | Destination port (0–65535). |
+| `protocol` | `string \| null` | Standardized transport protocol (`TCP`, `UDP`, `ICMP`). |
+| `event_type` | `string` | High-level event category (`network_flow`, `auth`, `process`). |
+| `action` | `string \| null` | Action taken (`ALLOWED`, `DENIED`, `SUCCESS`, `FAILURE`). |
+| `username` | `string \| null` | Associated user identity (`null` when not in dataset). |
+| `hostname` | `string \| null` | Target endpoint hostname (`null` when not in dataset). |
+| `process` | `string \| null` | Process executable name (`null` when not in dataset). |
+| `bytes_in` | `integer \| null` | Forward packet length / incoming bytes. |
+| `bytes_out` | `integer \| null` | Backward packet length / outgoing bytes. |
+| `duration` | `float \| null` | Flow duration in seconds. |
+| `label` | `string` | Preserved attack label (`BENIGN`, `SSH-Patator`, `PortScan`, `DoS Hulk`, `DDoS`). |
+| `raw_data` | `object` | Complete original un-normalized raw event record. |
+| `source` | `string` | Source origin identifier (`cic-ids2017`, `json_events`, `pcap`). |
+
+> [!IMPORTANT]
+> **Strict Non-Invention Rule**: The normalizer **never invents values** for missing fields. If a dataset does not provide hostnames or processes, they are strictly set to `null`. The original raw record is always preserved in `raw_data`.
+
+---
+
+### 🛡️ Validation & Error Resilience
+
+The ingestion engine validates:
+- **IP Format**: Rejects invalid addresses (e.g. `999.999.999.999`).
+- **Port Ranges**: Rejects out-of-range ports (`< 0` or `> 65535`).
+- **Timestamp Integrity**: Validates and standardizes multi-format date strings.
+- **Malformed Rows**: Rows with mismatched column counts are flagged and reported.
+
+> **Resilience Guarantee**: Individual malformed records are safely isolated in the dataset error log and **do not reject the entire dataset**. Valid rows are preserved and normalized.
+
+---
+
+### 📖 How to Import CIC-IDS2017 Datasets
+
+#### Method 1: Via SOC Web Interface (UI)
+1. Open the workstation at `http://localhost:5173` (or `http://localhost`).
+2. Click the **"Dataset Import"** tab in the top navigation bar.
+3. Choose **File Upload** or **Raw Text**:
+   - **Upload File**: Drag & drop any CIC-IDS2017 CSV file (e.g. `sample_data/cic_ids2017_sample.csv`).
+   - **Sample Demo**: Click **"LOAD BENCHMARK SAMPLE (CIC-IDS2017)"** for instant 1-click loading.
+4. Click **"IMPORT & NORMALIZE DATASET"**.
+5. Inspect:
+   - Real-time import progress and statistics.
+   - Attack categories & label distribution breakdown.
+   - Malformed records table (if any invalid rows occurred).
+   - Normalized event stream with raw payload inspector drawer.
+
+#### Method 2: Via REST API (`curl`)
+
+```bash
+# 1. Import a CIC-IDS2017 CSV file:
+curl -X POST "http://localhost:8000/api/v1/datasets/import/file" \
+  -F "file=@sample_data/cic_ids2017_sample.csv" \
+  -F "dataset_name=CIC-IDS2017 Friday Infiltration" \
+  -F "format_hint=CSV_NETWORK_FLOW"
+
+# 2. Load the bundled benchmark sample:
+curl -X POST "http://localhost:8000/api/v1/datasets/sample/load"
+
+# 3. List all imported datasets:
+curl "http://localhost:8000/api/v1/datasets"
+
+# 4. Query normalized events for a dataset with filtering:
+curl "http://localhost:8000/api/v1/datasets/{dataset_id}/events?label=SSH-Patator&limit=25"
 ```
 
 ---
@@ -61,7 +139,7 @@ graph TD
 | Security Boundary | Design Rule & Enforcement Mechanism |
 | :--- | :--- |
 | **No Shell Access** | The AI engine has zero shell, terminal, or code execution access. |
-| **Read-Only Telemetry** | Tool Gateway exposes 9 read-only search tools. No write/delete operations exist. |
+| **Read-Only Telemetry** | Tool Gateway exposes 11 read-only search tools. No write/delete operations exist. |
 | **Strict Parameter Validation** | Inputs pass Pydantic schema validation. Malicious parameters trigger immediate rejection. |
 | **Untrusted Data Labeling** | Telemetry logs are wrapped in `<UNTRUSTED_TELEMETRY_DATA>` XML boundaries before reasoning. |
 | **Hard Autonomy Caps** | Max 5 iterations per hunt, max 10 tool calls, max 1000 records per call, 300s timeout. |
@@ -76,20 +154,15 @@ graph TD
 
 1. Clone or navigate to the repository:
    ```bash
-   cd /Users/os/.gemini/antigravity/scratch/threat-hunting-copilot
+   cd threat-hunting-copilot
    ```
 
-2. Copy the environment configuration template:
-   ```bash
-   cp .env.example .env
-   ```
-
-3. Launch all containerized services:
+2. Launch all containerized services:
    ```bash
    docker-compose up --build -d
    ```
 
-4. Access the SOC Analyst Interface:
+3. Access the SOC Analyst Interface:
    - **Frontend UI**: `http://localhost`
    - **FastAPI OpenAPI Docs**: `http://localhost:8000/docs`
    - **Health Endpoint**: `http://localhost:8000/api/v1/health`
@@ -114,64 +187,16 @@ npm run dev
 
 ---
 
-## 🧪 Synthetic Security Telemetry Engine
-
-The system generates realistic synthetic security logs across a 5-host enterprise network (`web-server-01`, `db-server-01`, `workstation-01`, `workstation-02`, `jump-host-01`).
-
-### Supported Attack Scenarios:
-1. `ssh-bruteforce`: SSH Password Brute Force Attack
-2. `credential-compromise`: Stolen SSH Credential Login
-3. `privilege-escalation`: Sudo GTFOBins Privilege Escalation
-4. `network-recon`: Internal Subnet Reconnaissance Scan
-5. `suspicious-dns`: DNS Tunneling Command & Control
-6. `post-login-exec`: Post-Authentication Malicious Script Pipeline
-7. `lateral-movement`: SSH Key Pivot Lateral Movement
-8. `suspicious-exfil`: Database Dump & Outbound Web Exfiltration
-
----
-
-## 📊 Evaluation Laboratory & Benchmark Results
-
-The system features an automated **Evaluation Laboratory** that compares AI findings against hidden synthetic Ground Truth metadata across all 8 attack scenarios without human bias.
-
-### Empirical Performance Metrics:
-- **Detection Rate**: `100.0%` across evaluated scenarios
-- **Precision / Recall**: Calculated dynamically against Ground Truth technique mappings
-- **False Positive Rate**: Empirically measured
-- **Evidence Coverage %**: Log coverage ratio
-- **Average Time to Finding**: ~22ms - 350ms per investigation
-
----
-
-## ⚡ Adversarial AI Security Testing
-
-The platform includes a dedicated **Adversarial AI Security Test Suite** evaluating resilience against indirect prompt injections and log payload tampering.
-
-### Tested Attack Vectors:
-- Prompt injection inside log process names (`ignore previous instructions...`)
-- Malicious SQL/Command injection strings in usernames
-- Instruction-like DNS queries
-- Obfuscated Base64 payloads
-- Evidence noise poisoning & payload context flooding
-
-### Security Results:
-- **Attack Success Rate**: `0.0%`
-- **Tool Policy Violations**: `0` (Strict Zero-Trust Gateway Boundary Enforced)
-
-> [!WARNING]
-> **Limitations Disclosure**: Primary security guarantees rely on deterministic architectural controls (read-only Tool Gateway, strict parameter validation, hard caps). LLM prompt injection defenses are inherently probabilistic and should always be paired with zero-trust architectural boundaries.
-
----
-
 ## 🔬 Automated Pytest Verification Suite
 
-To run the complete automated test suite (38 unit tests):
+To run the complete automated test suite (48 unit tests):
 
 ```bash
-backend/venv/bin/pytest backend/tests
+backend/venv/bin/pytest backend/tests -v
 ```
 
 **Test Coverage Highlights**:
+- `test_dataset_ingestion.py`: CSV normalization, JSON events, PCAP parsing, malformed error resilience, label preservation
 - `test_autonomous_control.py`: Autonomy caps & approval gates
 - `test_enrichment_graph.py`: Entity indicator graph builder
 - `test_evaluation_lab.py`: Quantitative ground truth benchmark runner
