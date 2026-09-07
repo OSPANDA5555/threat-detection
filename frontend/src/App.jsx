@@ -14,6 +14,7 @@ import SecurityPanel from './components/SecurityPanel';
 import DatasetImport from './components/DatasetImport';
 import EventReplayPanel from './components/EventReplayPanel';
 import LiveIncidentCenter from './components/LiveIncidentCenter';
+import LiveAgentsDashboard from './components/LiveAgentsDashboard';
 
 export const FALLBACK_SAMPLE_HUNT = {
   id: "hunt-demo-ssh-01",
@@ -232,6 +233,10 @@ export default function App() {
             onStartHunt={() => setActiveTab('workspace')}
             healthData={healthData}
           />
+        )}
+
+        {activeTab === 'agents' && (
+          <LiveAgentsDashboard />
         )}
 
         {activeTab === 'incidents' && (

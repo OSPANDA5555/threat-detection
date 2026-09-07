@@ -1,0 +1,13 @@
+{
+  "backend_url": "https://soc-platform.corp.internal/api/events",
+  "agent_id": "agent-linux-prod-01",
+  "auth_token": "threat_copilot_sec_token_xxxxxxxx",
+  "batch_size": 25,
+  "flush_interval_seconds": 2.0,
+  "checkpoint_file": "/var/lib/threat-hunter-agent/offsets.json",
+  "log_sources": {
+    "auth_log": "/var/log/auth.log",
+    "audit_log": "/var/log/audit/audit.log",
+    "proc_net": "/proc/net/tcp"
+  }
+}

@@ -28,6 +28,9 @@ from app.schemas.stream import StreamStats, StreamedEvent
 from app.streaming.hub import streaming_hub
 from app.detection.engine import realtime_detection_engine
 from app.detection.models import ActiveIncident, EvaluationMetrics, DetectionAlert
+from app.agent.models import AgentRegistration, AgentStatus, AgentEventBatch, AgentIngestionResponse
+from app.agent.registry import agent_registry
+from app.normalization.pipeline import EventNormalizationPipeline
 
 
 
@@ -512,6 +515,94 @@ async def reset_incidents_and_evaluation() -> Dict[str, str]:
     """
     realtime_detection_engine.reset()
     return {"status": "success", "message": "Incident state and evaluation metrics reset successfully."}
+
+
+# ==============================================================================
+# Linux Agent Telemetry Ingestion & Live Agents Endpoints
+# ==============================================================================
+
+@app.post("/api/events", response_model=AgentIngestionResponse, tags=["Agent Ingestion"])
+@app.post(f"{settings.API_V1_STR}/events", response_model=AgentIngestionResponse, tags=["Agent Ingestion"])
+@app.post("/api/events/ingest", response_model=AgentIngestionResponse, tags=["Agent Ingestion"])
+@app.post(f"{settings.API_V1_STR}/events/ingest", response_model=AgentIngestionResponse, tags=["Agent Ingestion"])
+async def ingest_agent_events(batch: AgentEventBatch, request: Request) -> AgentIngestionResponse:
+    """
+    Ingest real security telemetry events sent by a lightweight Linux collector/agent.
+    Updates agent heartbeat/statistics and forwards events to real-time streaming,
+    detection, and incident correlation pipelines.
+    """
+    client_ip = request.client.host if request.client else None
+    
+    # 1. Update agent registry state
+    agent_registry.record_ingestion(
+        agent_id=batch.agent_id,
+        hostname=batch.hostname,
+        agent_version=batch.agent_version,
+        sequence_number=batch.sequence_number,
+        events_count=len(batch.events),
+        ip_address=client_ip
+    )
+
+    # 2. Normalize and broadcast each event into the real-time pipeline
+    ingested_count = 0
+    for raw_item in batch.events:
+        try:
+            # If already canonical or raw dict, ensure hostname and agent metadata are attached
+            if isinstance(raw_item, dict):
+                if not raw_item.get("hostname"):
+                    raw_item["hostname"] = batch.hostname
+                if not raw_item.get("source"):
+                    raw_item["source"] = f"agent:{batch.agent_id}"
+
+            # Broadcast to WebSocket clients & real-time detection pipeline
+            await streaming_hub.broadcast_event(raw_item)
+            ingested_count += 1
+        except Exception as e:
+            pass
+
+    return AgentIngestionResponse(
+        status="success",
+        agent_id=batch.agent_id,
+        events_ingested=ingested_count,
+        latest_sequence=batch.sequence_number,
+        server_time=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    )
+
+@app.post("/api/agents/register", response_model=AgentStatus, tags=["Agent Ingestion"])
+@app.post(f"{settings.API_V1_STR}/agents/register", response_model=AgentStatus, tags=["Agent Ingestion"])
+async def register_agent(reg: AgentRegistration, request: Request) -> AgentStatus:
+    """
+    Register a new Linux agent or refresh an existing agent registration.
+    """
+    client_ip = request.client.host if request.client else None
+    return agent_registry.register_or_update(
+        agent_id=reg.agent_id,
+        hostname=reg.hostname,
+        agent_version=reg.agent_version,
+        platform=reg.platform,
+        ip_address=client_ip or reg.ip_address
+    )
+
+@app.get("/api/agents", response_model=List[AgentStatus], tags=["Agent Ingestion"])
+@app.get(f"{settings.API_V1_STR}/agents", response_model=List[AgentStatus], tags=["Agent Ingestion"])
+async def list_registered_agents() -> List[AgentStatus]:
+    """
+    Get all live registered Linux agents with their operational statuses,
+    last seen timestamps, and real-time EPS metrics.
+    """
+    return agent_registry.list_agents()
+
+@app.get("/api/agents/{agent_id}", response_model=AgentStatus, tags=["Agent Ingestion"])
+@app.get(f"{settings.API_V1_STR}/agents/{{agent_id}}", response_model=AgentStatus, tags=["Agent Ingestion"])
+async def get_agent_status(agent_id: str) -> AgentStatus:
+    """
+    Get detailed status for a specific registered Linux agent.
+    """
+    ag = agent_registry.get_agent(agent_id)
+    if not ag:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
+    return ag
+
 
 
 class EvaluateRequest(BaseModel):

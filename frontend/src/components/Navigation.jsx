@@ -20,6 +20,7 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
 
   const navItems = [
     { id: 'dashboard', label: 'SOC Dashboard', icon: Activity },
+    { id: 'agents', label: 'Live Agents', icon: Server },
     { id: 'incidents', label: 'Live Incidents', icon: Flame },
     { id: 'workspace', label: 'Hunt Workstation', icon: Terminal },
     { id: 'datasets', label: 'Dataset Import', icon: UploadCloud },
@@ -30,7 +31,7 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
     { id: 'evidence', label: 'Evidence Store', icon: FileText },
     { id: 'findings', label: 'Findings & Reports', icon: Shield },
     { id: 'evaluation', label: 'Ground Truth Eval', icon: Activity },
-    { id: 'health', label: 'Tool Gateway', icon: Server },
+    { id: 'health', label: 'Tool Gateway', icon: Cpu },
   ];
 
 
