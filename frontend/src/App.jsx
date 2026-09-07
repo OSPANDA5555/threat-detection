@@ -15,6 +15,7 @@ import DatasetImport from './components/DatasetImport';
 import EventReplayPanel from './components/EventReplayPanel';
 import LiveIncidentCenter from './components/LiveIncidentCenter';
 import LiveAgentsDashboard from './components/LiveAgentsDashboard';
+import InvestigationConsole from './components/InvestigationConsole';
 
 export const FALLBACK_SAMPLE_HUNT = {
   id: "hunt-demo-ssh-01",
@@ -169,6 +170,7 @@ export default function App() {
   const [sampleHunt, setSampleHunt] = useState(FALLBACK_SAMPLE_HUNT);
   const [activeScenarioId, setActiveScenarioId] = useState("ssh-bruteforce");
   const [executionMode, setExecutionMode] = useState("AUTONOMOUS");
+  const [telemetryMode, setTelemetryMode] = useState("LIVE_MONITORING");
   const [selectedReplayDatasetId, setSelectedReplayDatasetId] = useState(null);
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [apiLatencyMs, setApiLatencyMs] = useState(null);
@@ -220,6 +222,8 @@ export default function App() {
         onOpenReport={() => setIsReportOpen(true)}
         executionMode={executionMode}
         setExecutionMode={setExecutionMode}
+        telemetryMode={telemetryMode}
+        setTelemetryMode={setTelemetryMode}
       />
 
       <main style={{
@@ -232,6 +236,14 @@ export default function App() {
           <SOCDashboard
             onStartHunt={() => setActiveTab('workspace')}
             healthData={healthData}
+          />
+        )}
+
+        {activeTab === 'console' && (
+          <InvestigationConsole
+            telemetryMode={telemetryMode}
+            onStartHunt={() => setActiveTab('workspace')}
+            onOpenReport={() => setIsReportOpen(true)}
           />
         )}
 

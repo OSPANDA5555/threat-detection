@@ -1,7 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Activity, Terminal, Database, FileText, Server, Lock, Download, Layers, UserCheck, Zap, Clock, Cpu, UploadCloud, FastForward } from 'lucide-react';
+import { Shield, Activity, Terminal, Database, FileText, Server, Lock, Download, Layers, UserCheck, Zap, Clock, Cpu, UploadCloud, FastForward, Flame, Radio } from 'lucide-react';
+import UnifiedHealthBar from './UnifiedHealthBar';
 
-export default function Navigation({ activeTab, setActiveTab, activeHunt, healthData, apiLatencyMs, onOpenReport, executionMode, setExecutionMode }) {
+export default function Navigation({ 
+  activeTab, 
+  setActiveTab, 
+  activeHunt, 
+  healthData, 
+  apiLatencyMs, 
+  onOpenReport, 
+  executionMode, 
+  setExecutionMode,
+  telemetryMode = 'LIVE_MONITORING',
+  setTelemetryMode
+}) {
   const [utcTime, setUtcTime] = useState('');
 
   useEffect(() => {
@@ -20,19 +32,21 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
 
   const navItems = [
     { id: 'dashboard', label: 'SOC Dashboard', icon: Activity },
+    { id: 'console', label: 'Investigation Console', icon: Flame },
     { id: 'agents', label: 'Live Agents', icon: Server },
-    { id: 'incidents', label: 'Live Incidents', icon: Flame },
+    { id: 'incidents', label: 'Incidents & Graphs', icon: Layers },
     { id: 'workspace', label: 'Hunt Workstation', icon: Terminal },
     { id: 'datasets', label: 'Dataset Import', icon: UploadCloud },
     { id: 'replay', label: 'Event Replay', icon: FastForward },
-    { id: 'graph', label: 'Investigation Graph', icon: Layers },
-    { id: 'security', label: 'Adversarial Security', icon: Lock },
+    { id: 'graph', label: 'Entity Graph', icon: Layers },
+    { id: 'security', label: 'Adversarial Lab', icon: Lock },
     { id: 'explorer', label: 'Telemetry Explorer', icon: Database },
     { id: 'evidence', label: 'Evidence Store', icon: FileText },
-    { id: 'findings', label: 'Findings & Reports', icon: Shield },
+    { id: 'findings', label: 'Findings', icon: Shield },
     { id: 'evaluation', label: 'Ground Truth Eval', icon: Activity },
     { id: 'health', label: 'Tool Gateway', icon: Cpu },
   ];
+
 
 
   return (
@@ -104,6 +118,64 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
                 {apiLatencyMs == null ? '—' : `${apiLatencyMs}ms`}
               </span>
             </div>
+          </div>
+
+          {/* Global Telemetry Mode Selector */}
+          <div style={{ display: 'flex', background: '#040406', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', padding: '2px' }}>
+            <button
+              onClick={() => setTelemetryMode && setTelemetryMode('LIVE_MONITORING')}
+              style={{
+                background: telemetryMode === 'LIVE_MONITORING' ? 'rgba(16, 185, 129, 0.2)' : 'transparent',
+                border: telemetryMode === 'LIVE_MONITORING' ? '1px solid #34d399' : '1px solid transparent',
+                color: telemetryMode === 'LIVE_MONITORING' ? '#34d399' : 'var(--text-dim)',
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.70rem',
+                fontWeight: 800,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <span className="pulse-dot" style={{ background: '#34d399', width: '5px', height: '5px' }} />
+              Live Monitoring
+            </button>
+            <button
+              onClick={() => setTelemetryMode && setTelemetryMode('DATASET_REPLAY')}
+              style={{
+                background: telemetryMode === 'DATASET_REPLAY' ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
+                border: telemetryMode === 'DATASET_REPLAY' ? '1px solid #60a5fa' : '1px solid transparent',
+                color: telemetryMode === 'DATASET_REPLAY' ? '#60a5fa' : 'var(--text-dim)',
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.70rem',
+                fontWeight: 800,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#60a5fa' }} />
+              Dataset Replay
+            </button>
+            <button
+              onClick={() => setTelemetryMode && setTelemetryMode('SIMULATION')}
+              style={{
+                background: telemetryMode === 'SIMULATION' ? 'rgba(192, 132, 252, 0.2)' : 'transparent',
+                border: telemetryMode === 'SIMULATION' ? '1px solid #c084fc' : '1px solid transparent',
+                color: telemetryMode === 'SIMULATION' ? '#c084fc' : 'var(--text-dim)',
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.70rem',
+                fontWeight: 800,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#c084fc' }} />
+              Simulation
+            </button>
           </div>
 
           {/* Dual Mode Toggle */}
@@ -178,9 +250,11 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
             <span className="pulse-dot" style={{ background: isHealthy ? 'var(--status-green)' : 'var(--status-red)', width: '6px', height: '6px' }} />
             {isHealthy ? 'Gateway online' : 'Offline'}
           </div>
-
         </div>
       </div>
+
+      {/* Real-Time 6-Subsystem Health Bar */}
+      <UnifiedHealthBar />
 
       {/* Main Navigation Bar */}
       <div style={{
