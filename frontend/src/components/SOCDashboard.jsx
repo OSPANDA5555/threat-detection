@@ -21,6 +21,7 @@ import {
   Eye
 } from 'lucide-react';
 import { useEventStream, ConnectionState } from '../services/useEventStream';
+import SimulatedAttackSelector from './SimulatedAttackSelector';
 
 export default function SOCDashboard({ onStartHunt, healthData }) {
   const isHealthy = healthData?.status === 'HEALTHY';
@@ -211,6 +212,9 @@ export default function SOCDashboard({ onStartHunt, healthData }) {
           </span>
         </div>
       </div>
+
+      {/* Prebuilt Attack Scenarios Replay Section */}
+      <SimulatedAttackSelector />
 
       {/* Current Event Spotlight & Live Event Stream Table */}
       <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', gap: '20px' }}>

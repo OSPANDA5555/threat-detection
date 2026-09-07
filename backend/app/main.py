@@ -31,6 +31,8 @@ from app.detection.models import ActiveIncident, EvaluationMetrics, DetectionAle
 from app.agent.models import AgentRegistration, AgentStatus, AgentEventBatch, AgentIngestionResponse
 from app.agent.registry import agent_registry
 from app.normalization.pipeline import EventNormalizationPipeline
+from app.scenarios.definitions import get_prebuilt_scenarios, PrebuiltScenario
+from app.scenarios.engine import simulated_scenario_runner, SimulatedReplayStatus
 
 
 
@@ -602,6 +604,64 @@ async def get_agent_status(agent_id: str) -> AgentStatus:
     if not ag:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
     return ag
+
+
+# ==============================================================================
+# Prebuilt Simulated Attack Scenarios & Replay Endpoints
+# ==============================================================================
+
+@app.get("/api/scenarios", response_model=List[PrebuiltScenario], tags=["Simulated Scenarios"])
+@app.get(f"{settings.API_V1_STR}/scenarios", response_model=List[PrebuiltScenario], tags=["Simulated Scenarios"])
+async def list_prebuilt_scenarios() -> List[PrebuiltScenario]:
+    """
+    List all prebuilt attack scenarios clearly categorized as SIMULATED ATTACK REPLAY.
+    """
+    scenarios = get_prebuilt_scenarios()
+    return list(scenarios.values())
+
+@app.get("/api/scenarios/status", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
+@app.get(f"{settings.API_V1_STR}/scenarios/status", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
+async def get_scenario_replay_status() -> SimulatedReplayStatus:
+    """
+    Get current execution status of simulated attack scenario replay.
+    """
+    return simulated_scenario_runner.get_status()
+
+@app.get("/api/scenarios/{scenario_id}", response_model=PrebuiltScenario, tags=["Simulated Scenarios"])
+@app.get(f"{settings.API_V1_STR}/scenarios/{{scenario_id}}", response_model=PrebuiltScenario, tags=["Simulated Scenarios"])
+async def get_prebuilt_scenario(scenario_id: str) -> PrebuiltScenario:
+    """
+    Get specific prebuilt simulated attack scenario details and expected MITRE techniques.
+    """
+    scenarios = get_prebuilt_scenarios()
+    if scenario_id not in scenarios:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found.")
+    return scenarios[scenario_id]
+
+@app.post("/api/scenarios/replay/{scenario_id}", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
+@app.post(f"{settings.API_V1_STR}/scenarios/replay/{{scenario_id}}", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
+async def start_scenario_replay(
+    scenario_id: str,
+    speed_multiplier: float = Query(2.0, ge=0.25, le=50.0)
+) -> SimulatedReplayStatus:
+    """
+    Start streaming simulated attack replay events live over WebSocket.
+    Clearly marked as SIMULATED ATTACK REPLAY with zero label leakage.
+    """
+    try:
+        return await simulated_scenario_runner.start(scenario_id, speed_multiplier)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/scenarios/stop", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
+@app.post(f"{settings.API_V1_STR}/scenarios/stop", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
+async def stop_scenario_replay() -> SimulatedReplayStatus:
+    """
+    Stop active simulated attack scenario replay.
+    """
+    return await simulated_scenario_runner.stop()
+
+
 
 
 
