@@ -21,6 +21,8 @@ from app.telemetry.generator import telemetry_engine
 from app.telemetry.evaluation import EvaluationEngine
 from app.telemetry.lab import EvaluationLabRunner, EVALUATION_RUN_STORE
 from app.core.security import check_rate_limit
+from app.schemas.replay import ReplayConfig, ReplayStatus
+from app.replay.engine import replay_engine
 
 
 
@@ -373,6 +375,54 @@ async def delete_imported_dataset(dataset_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
     return {"status": "SUCCESS", "message": f"Dataset '{dataset_id}' removed successfully."}
+
+# ==============================================================================
+# Security Event Replay Engine Endpoints
+# ==============================================================================
+
+@app.post("/api/replay/start", response_model=ReplayStatus, tags=["Replay Engine"])
+@app.post(f"{settings.API_V1_STR}/replay/start", response_model=ReplayStatus, tags=["Replay Engine"])
+async def start_event_replay(config: ReplayConfig) -> ReplayStatus:
+    """
+    Start chronological event replay from an imported dataset at specified speedMultiplier.
+    Preserves original event timestamps without modification.
+    """
+    try:
+        return await replay_engine.start(config)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/replay/pause", response_model=ReplayStatus, tags=["Replay Engine"])
+@app.post(f"{settings.API_V1_STR}/replay/pause", response_model=ReplayStatus, tags=["Replay Engine"])
+async def pause_event_replay() -> ReplayStatus:
+    """
+    Pause actively running security-event replay.
+    """
+    return await replay_engine.pause()
+
+@app.post("/api/replay/resume", response_model=ReplayStatus, tags=["Replay Engine"])
+@app.post(f"{settings.API_V1_STR}/replay/resume", response_model=ReplayStatus, tags=["Replay Engine"])
+async def resume_event_replay() -> ReplayStatus:
+    """
+    Resume paused security-event replay from exact paused point.
+    """
+    return await replay_engine.resume()
+
+@app.post("/api/replay/stop", response_model=ReplayStatus, tags=["Replay Engine"])
+@app.post(f"{settings.API_V1_STR}/replay/stop", response_model=ReplayStatus, tags=["Replay Engine"])
+async def stop_event_replay() -> ReplayStatus:
+    """
+    Stop and reset security-event replay.
+    """
+    return await replay_engine.stop()
+
+@app.get("/api/replay/status", response_model=ReplayStatus, tags=["Replay Engine"])
+@app.get(f"{settings.API_V1_STR}/replay/status", response_model=ReplayStatus, tags=["Replay Engine"])
+async def get_event_replay_status() -> ReplayStatus:
+    """
+    Get current state, progress indicator, emitted/remaining counts, and simulated timestamp.
+    """
+    return replay_engine.get_status()
 
 class EvaluateRequest(BaseModel):
     scenario_id: str = Field(max_length=200)

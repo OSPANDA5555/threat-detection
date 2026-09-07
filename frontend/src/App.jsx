@@ -12,6 +12,7 @@ import ExecutiveReportModal from './components/ExecutiveReportModal';
 import InvestigationGraph from './components/InvestigationGraph';
 import SecurityPanel from './components/SecurityPanel';
 import DatasetImport from './components/DatasetImport';
+import EventReplayPanel from './components/EventReplayPanel';
 
 export const FALLBACK_SAMPLE_HUNT = {
   id: "hunt-demo-ssh-01",
@@ -166,6 +167,7 @@ export default function App() {
   const [sampleHunt, setSampleHunt] = useState(FALLBACK_SAMPLE_HUNT);
   const [activeScenarioId, setActiveScenarioId] = useState("ssh-bruteforce");
   const [executionMode, setExecutionMode] = useState("AUTONOMOUS");
+  const [selectedReplayDatasetId, setSelectedReplayDatasetId] = useState(null);
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [apiLatencyMs, setApiLatencyMs] = useState(null);
 
@@ -242,7 +244,18 @@ export default function App() {
         )}
 
         {activeTab === 'datasets' && (
-          <DatasetImport />
+          <DatasetImport
+            onNavigateToReplay={(dsId) => {
+              setSelectedReplayDatasetId(dsId);
+              setActiveTab('replay');
+            }}
+          />
+        )}
+
+        {activeTab === 'replay' && (
+          <EventReplayPanel
+            initialDatasetId={selectedReplayDatasetId}
+          />
         )}
 
         {activeTab === 'graph' && (

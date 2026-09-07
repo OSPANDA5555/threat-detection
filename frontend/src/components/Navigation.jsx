@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Activity, Terminal, Database, FileText, Server, Lock, Download, Layers, UserCheck, Zap, Clock, Cpu, UploadCloud } from 'lucide-react';
+import { Shield, Activity, Terminal, Database, FileText, Server, Lock, Download, Layers, UserCheck, Zap, Clock, Cpu, UploadCloud, FastForward } from 'lucide-react';
 
 export default function Navigation({ activeTab, setActiveTab, activeHunt, healthData, apiLatencyMs, onOpenReport, executionMode, setExecutionMode }) {
   const [utcTime, setUtcTime] = useState('');
@@ -21,6 +21,7 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
   const navItems = [
     { id: 'workspace', label: 'Hunt Workstation', icon: Terminal },
     { id: 'datasets', label: 'Dataset Import', icon: UploadCloud },
+    { id: 'replay', label: 'Event Replay', icon: FastForward },
     { id: 'graph', label: 'Investigation Graph', icon: Layers },
     { id: 'security', label: 'Adversarial Security', icon: Lock },
     { id: 'explorer', label: 'Telemetry Explorer', icon: Database },

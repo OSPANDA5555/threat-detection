@@ -18,10 +18,11 @@ import {
   Download, 
   Sparkles,
   ArrowRight,
-  Code2
+  Code2,
+  FastForward
 } from 'lucide-react';
 
-export default function DatasetImport() {
+export default function DatasetImport({ onNavigateToReplay }) {
   const [datasets, setDatasets] = useState([]);
   const [activeDatasetId, setActiveDatasetId] = useState(null);
   const [activeDataset, setActiveDataset] = useState(null);
@@ -233,6 +234,27 @@ export default function DatasetImport() {
         </div>
 
         <div style={{ display: 'flex', gap: '10px' }}>
+          {onNavigateToReplay && (
+            <button
+              onClick={() => onNavigateToReplay(activeDatasetId)}
+              style={{
+                background: 'rgba(16, 185, 129, 0.15)',
+                border: '1px solid rgba(16, 185, 129, 0.4)',
+                color: '#34d399',
+                padding: '8px 16px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.78rem',
+                fontWeight: 800,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                cursor: 'pointer'
+              }}
+            >
+              <FastForward size={14} />
+              OPEN IN REPLAY ENGINE
+            </button>
+          )}
           <button
             onClick={handleLoadBenchmarkSample}
             disabled={uploading}
