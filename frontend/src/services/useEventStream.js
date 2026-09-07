@@ -44,10 +44,21 @@ export function useEventStream({ maxBufferSize = 200, enabled = true } = {}) {
       } catch (e) {}
     }
 
-    const isSecure = window.location.protocol === 'https:';
-    const protocol = isSecure ? 'wss:' : 'ws:';
-    const host = window.location.host || 'localhost:8000';
-    const wsUrl = `${protocol}//${host}/ws/events?last_sequence=${lastSequenceRef.current}`;
+    let wsUrl = '';
+    if (import.meta.env?.VITE_WS_URL) {
+      const clean = import.meta.env.VITE_WS_URL.replace(/\/$/, '');
+      wsUrl = `${clean}/ws/events?last_sequence=${lastSequenceRef.current}`;
+    } else if (import.meta.env?.VITE_BACKEND_URL) {
+      const httpBase = import.meta.env.VITE_BACKEND_URL.replace(/\/$/, '');
+      const wsProtocol = httpBase.startsWith('https') ? 'wss:' : 'ws:';
+      const hostPart = httpBase.replace(/^https?:\/\//, '');
+      wsUrl = `${wsProtocol}//${hostPart}/ws/events?last_sequence=${lastSequenceRef.current}`;
+    } else {
+      const isSecure = window.location.protocol === 'https:';
+      const protocol = isSecure ? 'wss:' : 'ws:';
+      const host = window.location.host || 'localhost:8000';
+      wsUrl = `${protocol}//${host}/ws/events?last_sequence=${lastSequenceRef.current}`;
+    }
 
     try {
       const ws = new WebSocket(wsUrl);

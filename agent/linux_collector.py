@@ -434,12 +434,47 @@ class LinuxCollectorAgent:
             logger.warning(f"Unexpected error during shipment: {e}")
             return False
 
+    def send_heartbeat(self) -> bool:
+        """Sends an immediate zero-event heartbeat to register with the backend."""
+        payload = {
+            "agent_id": self.agent_id,
+            "hostname": self.hostname,
+            "agent_version": AGENT_VERSION,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "sequence_number": self.sequence_number,
+            "events": []
+        }
+        try:
+            data_bytes = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                self.backend_url,
+                data=data_bytes,
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": f"ThreatHunterAgent/{AGENT_VERSION} ({self.platform_info})"
+                }
+            )
+            if self.auth_token:
+                req.add_header("Authorization", f"Bearer {self.auth_token}")
+
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                if resp.status in [200, 201, 202]:
+                    logger.info(f"Agent heartbeat registered successfully with backend ({self.backend_url}). Status: ONLINE")
+                    return True
+        except Exception as e:
+            logger.warning(f"Initial heartbeat failed: {e}. Telemetry will be queued and retried.")
+            return False
+        return False
+
     def start_daemon(self, poll_interval: float = 1.0):
         """Continuously tails logs and ships telemetry."""
         logger.info(f"Starting Linux Collector Agent {AGENT_VERSION} for host '{self.hostname}'")
         logger.info(f"Agent ID: {self.agent_id}")
         logger.info(f"Ingestion Backend: {self.backend_url}")
         logger.info(f"Checkpoint File: {self.checkpoint.checkpoint_file}")
+
+        # Send initial heartbeat to register agent
+        self.send_heartbeat()
 
         try:
             while True:
@@ -454,19 +489,39 @@ class LinuxCollectorAgent:
 # CLI Entrypoint
 # ==============================================================================
 def main():
+    default_backend = os.environ.get("SOC_BACKEND_URL") or os.environ.get("BACKEND_URL") or "http://localhost:8000/api/events"
+    default_agent_id = os.environ.get("SOC_AGENT_ID") or os.environ.get("AGENT_ID") or None
+    default_auth_token = os.environ.get("SOC_API_KEY") or os.environ.get("SOC_AUTH_TOKEN") or os.environ.get("AUTH_TOKEN") or None
+    default_checkpoint = os.environ.get("SOC_CHECKPOINT_FILE") or os.environ.get("CHECKPOINT_FILE") or DEFAULT_CHECKPOINT_FILE
+    default_batch_size = int(os.environ.get("SOC_BATCH_SIZE", "25"))
+    default_flush_interval = float(os.environ.get("SOC_FLUSH_INTERVAL", "2.0"))
+    default_poll_interval = float(os.environ.get("SOC_POLL_INTERVAL", "1.5"))
+
     parser = argparse.ArgumentParser(description="Threat-Hunting Linux Telemetry Collector Agent")
-    parser.add_argument("--backend-url", default="http://localhost:8000/api/events", help="Backend ingestion endpoint")
-    parser.add_argument("--agent-id", default=None, help="Unique agent identifier")
-    parser.add_argument("--auth-token", default=None, help="Agent authentication bearer token")
-    parser.add_argument("--checkpoint-file", default=DEFAULT_CHECKPOINT_FILE, help="Path to offset checkpoint file")
-    parser.add_argument("--interval", type=float, default=1.5, help="Polling interval in seconds")
+    parser.add_argument("--backend-url", "--backend", dest="backend_url", default=default_backend, help="Backend ingestion endpoint")
+    parser.add_argument("--agent-id", dest="agent_id", default=default_agent_id, help="Unique agent identifier")
+    parser.add_argument("--auth-token", "--api-key", dest="auth_token", default=default_auth_token, help="Agent authentication bearer token")
+    parser.add_argument("--checkpoint-file", dest="checkpoint_file", default=default_checkpoint, help="Path to offset checkpoint file")
+    parser.add_argument("--batch-size", dest="batch_size", type=int, default=default_batch_size, help="Batch size for event shipment")
+    parser.add_argument("--flush-interval", dest="flush_interval", type=float, default=default_flush_interval, help="Flush interval in seconds")
+    parser.add_argument("--interval", "--poll-interval", dest="interval", type=float, default=default_poll_interval, help="Polling interval in seconds")
+    parser.add_argument("--from-beginning", dest="from_beginning", action="store_true", help="Start tailing from beginning of logs (ignores checkpoint)")
     parser.add_argument("--once", action="store_true", help="Run a single collection iteration and exit")
     args = parser.parse_args()
+
+    if args.from_beginning and os.path.exists(args.checkpoint_file):
+        try:
+            os.remove(args.checkpoint_file)
+            logger.info("Cleared previous checkpoint to read logs from beginning.")
+        except Exception as e:
+            logger.warning(f"Could not remove checkpoint file: {e}")
 
     agent = LinuxCollectorAgent(
         backend_url=args.backend_url,
         agent_id=args.agent_id,
         auth_token=args.auth_token,
+        batch_size=args.batch_size,
+        flush_interval_seconds=args.flush_interval,
         checkpoint_file=args.checkpoint_file
     )
 
