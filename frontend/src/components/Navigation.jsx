@@ -19,6 +19,8 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
   const status = activeHunt?.status || 'COMPLETED';
 
   const navItems = [
+    { id: 'dashboard', label: 'SOC Dashboard', icon: Activity },
+    { id: 'incidents', label: 'Live Incidents', icon: Flame },
     { id: 'workspace', label: 'Hunt Workstation', icon: Terminal },
     { id: 'datasets', label: 'Dataset Import', icon: UploadCloud },
     { id: 'replay', label: 'Event Replay', icon: FastForward },

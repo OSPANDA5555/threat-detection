@@ -13,6 +13,9 @@ export function useEventStream({ maxBufferSize = 200, enabled = true } = {}) {
   const [totalEventsReceived, setTotalEventsReceived] = useState(0);
   const [eventsPerSec, setEventsPerSec] = useState(0.0);
   const [isPaused, setIsPaused] = useState(false);
+  const [alerts, setAlerts] = useState([]);
+  const [latestAlert, setLatestAlert] = useState(null);
+  const [activeIncidentsCount, setActiveIncidentsCount] = useState(0);
 
   const wsRef = useRef(null);
   const lastSequenceRef = useRef(0);
@@ -74,6 +77,13 @@ export function useEventStream({ maxBufferSize = 200, enabled = true } = {}) {
           const payload = JSON.parse(event.data);
 
           if (payload.type === 'pong' || payload.type === 'connected') {
+            return;
+          }
+
+          if (payload.type === 'detection_alert') {
+            setLatestAlert(payload.detection);
+            setActiveIncidentsCount(payload.active_incidents_count || 0);
+            setAlerts(prev => [payload.detection, ...prev].slice(0, 100));
             return;
           }
 
@@ -180,6 +190,9 @@ export function useEventStream({ maxBufferSize = 200, enabled = true } = {}) {
     totalEventsReceived,
     eventsPerSec,
     isPaused,
+    alerts,
+    latestAlert,
+    activeIncidentsCount,
     clearEvents,
     togglePause,
     reconnectNow

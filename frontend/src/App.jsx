@@ -13,6 +13,7 @@ import InvestigationGraph from './components/InvestigationGraph';
 import SecurityPanel from './components/SecurityPanel';
 import DatasetImport from './components/DatasetImport';
 import EventReplayPanel from './components/EventReplayPanel';
+import LiveIncidentCenter from './components/LiveIncidentCenter';
 
 export const FALLBACK_SAMPLE_HUNT = {
   id: "hunt-demo-ssh-01",
@@ -230,6 +231,14 @@ export default function App() {
           <SOCDashboard
             onStartHunt={() => setActiveTab('workspace')}
             healthData={healthData}
+          />
+        )}
+
+        {activeTab === 'incidents' && (
+          <LiveIncidentCenter
+            onInvestigateIncident={(inc) => {
+              setActiveTab('workspace');
+            }}
           />
         )}
 

@@ -26,6 +26,8 @@ from app.schemas.replay import ReplayConfig, ReplayStatus
 from app.replay.engine import replay_engine
 from app.schemas.stream import StreamStats, StreamedEvent
 from app.streaming.hub import streaming_hub
+from app.detection.engine import realtime_detection_engine
+from app.detection.models import ActiveIncident, EvaluationMetrics, DetectionAlert
 
 
 
@@ -469,6 +471,48 @@ async def get_event_streaming_stats() -> StreamStats:
     Get live streaming hub metrics (connected clients, events/sec, latest sequence).
     """
     return streaming_hub.get_stats()
+
+
+# ==============================================================================
+# Real-Time Incident Correlation & Detection Endpoints
+# ==============================================================================
+
+@app.get("/api/incidents/active", response_model=List[ActiveIncident], tags=["Incident Detection"])
+@app.get(f"{settings.API_V1_STR}/incidents/active", response_model=List[ActiveIncident], tags=["Incident Detection"])
+async def get_active_incidents() -> List[ActiveIncident]:
+    """
+    Get all active security incidents correlated from real-time SecurityEvent stream.
+    """
+    return realtime_detection_engine.get_active_incidents()
+
+@app.get("/api/incidents/evaluation", response_model=EvaluationMetrics, tags=["Incident Detection"])
+@app.get(f"{settings.API_V1_STR}/incidents/evaluation", response_model=EvaluationMetrics, tags=["Incident Detection"])
+async def get_evaluation_metrics() -> EvaluationMetrics:
+    """
+    Get online evaluation metrics (TP, FP, FN, Precision, Recall, F1) against dataset ground truth.
+    """
+    return realtime_detection_engine.get_evaluation_metrics()
+
+@app.get("/api/incidents/{incident_id}", response_model=ActiveIncident, tags=["Incident Detection"])
+@app.get(f"{settings.API_V1_STR}/incidents/{{incident_id}}", response_model=ActiveIncident, tags=["Incident Detection"])
+async def get_incident_detail(incident_id: str) -> ActiveIncident:
+    """
+    Get complete details of an active incident including dynamic attack graph and timeline.
+    """
+    inc = realtime_detection_engine.get_incident(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident '{incident_id}' not found.")
+    return inc
+
+@app.post("/api/incidents/reset", tags=["Incident Detection"])
+@app.post(f"{settings.API_V1_STR}/incidents/reset", tags=["Incident Detection"])
+async def reset_incidents_and_evaluation() -> Dict[str, str]:
+    """
+    Reset real-time incident state, attack graphs, and evaluation metrics.
+    """
+    realtime_detection_engine.reset()
+    return {"status": "success", "message": "Incident state and evaluation metrics reset successfully."}
+
 
 class EvaluateRequest(BaseModel):
     scenario_id: str = Field(max_length=200)

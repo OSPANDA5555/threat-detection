@@ -152,6 +152,10 @@ class EventStreamingHub:
         # Store in historical circular buffer
         self._historical_buffer.append(streamed)
 
+        # Real-time behavioral detection pipeline evaluation
+        from app.detection.engine import realtime_detection_engine
+        alerts = realtime_detection_engine.process_event(streamed)
+
         # Broadcast to active connections
         if self._active_connections:
             msg_json = json.dumps(streamed.model_dump())
@@ -163,6 +167,19 @@ class EventStreamingHub:
                     await asyncio.wait_for(ws.send_text(msg_json), timeout=0.5)
                 except (WebSocketDisconnect, asyncio.TimeoutError, Exception) as e:
                     dead_sockets.add(ws)
+
+            # If behavioral detections triggered, broadcast detection alerts immediately
+            for alert in alerts:
+                alert_payload = json.dumps({
+                    "type": "detection_alert",
+                    "detection": alert.model_dump(),
+                    "active_incidents_count": len(realtime_detection_engine.get_active_incidents())
+                })
+                for ws in list(self._active_connections):
+                    try:
+                        await asyncio.wait_for(ws.send_text(alert_payload), timeout=0.5)
+                    except Exception:
+                        pass
 
             if dead_sockets:
                 async with self._lock:
