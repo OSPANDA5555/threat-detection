@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException, Query, Request, status
+from fastapi import FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import time
+import json
 import uuid
 
 
@@ -23,6 +24,8 @@ from app.telemetry.lab import EvaluationLabRunner, EVALUATION_RUN_STORE
 from app.core.security import check_rate_limit
 from app.schemas.replay import ReplayConfig, ReplayStatus
 from app.replay.engine import replay_engine
+from app.schemas.stream import StreamStats, StreamedEvent
+from app.streaming.hub import streaming_hub
 
 
 
@@ -423,6 +426,49 @@ async def get_event_replay_status() -> ReplayStatus:
     Get current state, progress indicator, emitted/remaining counts, and simulated timestamp.
     """
     return replay_engine.get_status()
+
+# ==============================================================================
+# Real-Time Event Streaming Endpoints (WebSocket & Stats)
+# ==============================================================================
+
+@app.websocket("/ws/events")
+@app.websocket(f"{settings.API_V1_STR}/events/ws")
+async def websocket_event_stream(
+    websocket: WebSocket,
+    client_id: Optional[str] = Query(None),
+    last_sequence: Optional[int] = Query(None)
+):
+    """
+    Real-time WebSocket event stream for SOC clients.
+    Supports automatic reconnects, sequence tracking, and duplicate prevention.
+    """
+    await streaming_hub.connect(websocket, client_id=client_id, last_sequence=last_sequence)
+    try:
+        while True:
+            raw_text = await websocket.receive_text()
+            try:
+                msg = json.loads(raw_text)
+                msg_type = msg.get("type")
+                if msg_type == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong", "time": time.time()}))
+                elif msg_type == "subscribe" or msg_type == "sync":
+                    req_last_seq = msg.get("last_sequence")
+                    if req_last_seq is not None:
+                        await streaming_hub._backfill_missed_events(websocket, int(req_last_seq))
+            except json.JSONDecodeError:
+                pass
+    except WebSocketDisconnect:
+        await streaming_hub.disconnect(websocket)
+    except Exception:
+        await streaming_hub.disconnect(websocket)
+
+@app.get("/api/events/stats", response_model=StreamStats, tags=["Event Streaming"])
+@app.get(f"{settings.API_V1_STR}/events/stats", response_model=StreamStats, tags=["Event Streaming"])
+async def get_event_streaming_stats() -> StreamStats:
+    """
+    Get live streaming hub metrics (connected clients, events/sec, latest sequence).
+    """
+    return streaming_hub.get_stats()
 
 class EvaluateRequest(BaseModel):
     scenario_id: str = Field(max_length=200)

@@ -8,6 +8,7 @@ from app.schemas.replay import ReplayConfig, ReplayStatus, ReplayState
 from app.schemas.dataset import NormalizedEvent
 from app.ingestion.service import dataset_service
 from app.ingestion.validator import parse_and_validate_timestamp
+from app.streaming.hub import streaming_hub
 
 logger = logging.getLogger("replay_engine")
 
@@ -261,6 +262,12 @@ class SecurityEventReplayEngine:
                 self._simulated_current_ts = event_obj.timestamp
                 self._current_index += 1
                 prev_epoch = curr_epoch
+
+                # Broadcast to connected real-time SOC clients
+                try:
+                    await streaming_hub.broadcast_event(event_dict)
+                except Exception as b_err:
+                    logger.warning(f"Error broadcasting replayed event: {b_err}")
 
                 # Yield control briefly to ensure smooth event loop execution
                 await asyncio.sleep(0.001)
