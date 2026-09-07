@@ -28,13 +28,14 @@ class EvidenceCorrelationEngine:
         }
         evd_source = source_map.get(tool_name, EvidenceSource.AUTHENTICATION)
 
-        for rec in records:
-            eid = rec.get("eventId") or rec.get("id") or f"evd-{tool_name[:6]}-{len(evidence_list):03d}"
-            host = rec.get("host")
-            user = rec.get("user")
-            src_ip = rec.get("sourceIp") or rec.get("source_ip") or rec.get("src_ip") or rec.get("client_ip")
-            dst_ip = rec.get("destinationIp") or rec.get("destination_ip") or rec.get("dest_ip")
-            action = rec.get("action") or rec.get("eventType") or tool_name
+        for item in records:
+            rec = item.model_dump() if hasattr(item, "model_dump") else (item if isinstance(item, dict) else {})
+            eid = rec.get("id") or rec.get("eventId") or f"evd-{tool_name[:6]}-{len(evidence_list):03d}"
+            host = rec.get("hostname") or rec.get("host")
+            user = rec.get("username") or rec.get("user")
+            src_ip = rec.get("source_ip") or rec.get("sourceIp") or rec.get("src_ip") or rec.get("client_ip")
+            dst_ip = rec.get("destination_ip") or rec.get("destinationIp") or rec.get("dest_ip")
+            action = rec.get("action") or rec.get("event_type") or rec.get("eventType") or tool_name
             status = rec.get("status", "SUCCESS")
             ts = rec.get("timestamp", "2026-08-10T19:30:00Z")
 
