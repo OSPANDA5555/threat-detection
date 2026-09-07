@@ -22,7 +22,9 @@ class EvidenceCorrelationEngine:
             "get_host_timeline": EvidenceSource.HOST_TIMELINE,
             "get_ip_activity": EvidenceSource.NETWORK,
             "get_domain_activity": EvidenceSource.DNS,
-            "get_alerts": EvidenceSource.ALERT
+            "get_alerts": EvidenceSource.ALERT,
+            "scan_open_ports": EvidenceSource.NETWORK,
+            "collect_workstation_telemetry": EvidenceSource.HOST_TIMELINE
         }
         evd_source = source_map.get(tool_name, EvidenceSource.AUTHENTICATION)
 

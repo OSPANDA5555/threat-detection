@@ -236,8 +236,10 @@ export default function App() {
         {activeTab === 'graph' && (
           <InvestigationGraph
             activeHunt={sampleHunt}
+            onSelectEvidenceId={(eid) => setActiveTab('evidence')}
           />
         )}
+
 
         {activeTab === 'security' && (
           <SecurityPanel />

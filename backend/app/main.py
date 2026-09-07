@@ -208,10 +208,38 @@ async def query_telemetry_events(
     events = telemetry_engine.query_events(flt)
     return [evt.model_dump() for evt in events]
 
+class CrossWorkstationCollectRequest(BaseModel):
+    hosts: List[str] = ["all"]
+    log_sources: List[str] = ["auth", "process", "network", "dns", "file"]
+    indicator: str = None
+    limit: int = 100
+
+@app.post(f"{settings.API_V1_STR}/telemetry/collect", tags=["Telemetry Engine"])
+async def collect_cross_workstation_telemetry(req: CrossWorkstationCollectRequest):
+    """
+    Collect, aggregate, and correlate security logs across specified workstations and endpoints.
+    """
+    from app.telemetry.generator import telemetry_engine
+    return telemetry_engine.collect_cross_workstation_telemetry(
+        hosts=req.hosts,
+        log_sources=req.log_sources,
+        indicator=req.indicator,
+        limit=req.limit
+    )
+
+@app.get(f"{settings.API_V1_STR}/telemetry/workstations", tags=["Telemetry Engine"])
+async def get_workstation_inventory():
+    """
+    Retrieve inventory of enterprise endpoints and workstations with telemetry status.
+    """
+    from app.telemetry.generator import telemetry_engine
+    return telemetry_engine.get_workstation_inventory()
+
 class EvaluateRequest(BaseModel):
     scenario_id: str = Field(max_length=200)
     finding: Finding
     evidence_list: List[Evidence] = Field(default_factory=list, max_length=500)
+
 
 @app.post(f"{settings.API_V1_STR}/telemetry/evaluate", response_model=EvaluationReport, tags=["Evaluation Engine"])
 async def evaluate_finding_against_ground_truth(req: EvaluateRequest) -> EvaluationReport:

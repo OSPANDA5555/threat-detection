@@ -99,5 +99,27 @@ INITIAL_TOOL_REGISTRY: Dict[str, ToolDefinition] = {
             ToolParameterSpec(name="rule_name", type="string", description="Detection rule name filter", required=False),
             ToolParameterSpec(name="limit", type="integer", description="Maximum alerts to return", required=False, default=50)
         ]
+    ),
+    "scan_open_ports": ToolDefinition(
+        name="scan_open_ports",
+        description="Scan read-only network telemetry for open ports, listening services (SSH port 22, HTTP, DB), and active service banners.",
+        read_only=True,
+        parameters=[
+            ToolParameterSpec(name="host", type="string", description="Target host to scan (e.g. web-server-01, db-server-01)", required=True),
+            ToolParameterSpec(name="port_range", type="string", description="Port or range (e.g. '22', '1-1024')", required=False, default="1-1024"),
+            ToolParameterSpec(name="protocol", type="string", description="TCP or UDP", required=False, default="TCP"),
+            ToolParameterSpec(name="limit", type="integer", description="Maximum open port records to return", required=False, default=50)
+        ]
+    ),
+    "collect_workstation_telemetry": ToolDefinition(
+        name="collect_workstation_telemetry",
+        description="Aggregate and correlate cross-workstation security logs across multiple hosts and log sources (Auth, Process, Network, DNS, File, EDR).",
+        read_only=True,
+        parameters=[
+            ToolParameterSpec(name="hosts", type="string", description="Comma-separated hosts or 'all' (e.g. 'workstation-01,workstation-02,web-server-01')", required=False, default="all"),
+            ToolParameterSpec(name="log_sources", type="string", description="Comma-separated sources e.g. 'auth,process,network,dns,file'", required=False, default="auth,process,network"),
+            ToolParameterSpec(name="indicator", type="string", description="Specific indicator (IP, username, domain, hash) to correlate across endpoints", required=False),
+            ToolParameterSpec(name="limit", type="integer", description="Maximum aggregated events to retrieve", required=False, default=100)
+        ]
     )
 }

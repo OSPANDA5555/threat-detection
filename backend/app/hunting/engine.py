@@ -330,6 +330,8 @@ class AutonomousHuntingEngine:
             "get_ip_activity": {"ip": "192.168.100.99", "limit": 100},
             "get_domain_activity": {"domain": "attacker-domain.com", "limit": 100},
             "get_alerts": {"limit": 100},
+            "scan_open_ports": {"host": "web-server-01", "limit": 100},
+            "collect_workstation_telemetry": {"hosts": "all", "limit": 100},
         }
         return dict(fallbacks.get(step.tool_suggested, {"limit": 100}))
 

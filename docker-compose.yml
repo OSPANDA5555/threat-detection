@@ -17,10 +17,13 @@ services:
       - POSTGRES_USER=threat_hunter
       - POSTGRES_PASSWORD=threat_hunter_sec_pass_2026
       - POSTGRES_DB=threat_hunting_db
+      - LOG_STORAGE_URL=http://log_storage:9200/api/v1/logs
     env_file:
       - .env.example
     depends_on:
       db:
+        condition: service_healthy
+      log_storage:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
@@ -64,9 +67,30 @@ services:
     networks:
       - soc_network
 
+  # 4. DEDICATED CENTRALIZED SECURITY LOG STORAGE CONTAINER
+  log_storage:
+    build:
+      context: ./log_storage
+      dockerfile: Dockerfile
+    container_name: threat_hunting_log_storage
+    ports:
+      - "9200:9200"
+    environment:
+      - LOG_DIR=/var/log/soc
+    volumes:
+      - logs_data:/var/log/soc
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - soc_network
+
 networks:
   soc_network:
     driver: bridge
 
 volumes:
   postgres_data:
+  logs_data:

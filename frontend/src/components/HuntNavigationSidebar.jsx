@@ -4,6 +4,8 @@ import { Terminal, Shield, Folder, CheckCircle2, Clock, Play } from 'lucide-reac
 export default function HuntNavigationSidebar({ onSelectScenario, activeScenarioId }) {
   const drills = [
     { id: "ssh-bruteforce", name: "SSH Password Brute Force", severity: "HIGH", diff: "EASY" },
+    { id: "port-ssh-scan", name: "Open SSH & Port Service Scan", severity: "MEDIUM", diff: "EASY" },
+    { id: "cross-workstation-collect", name: "Cross-Workstation Log Collector", severity: "HIGH", diff: "HARD" },
     { id: "credential-compromise", name: "Credential Access & Login", severity: "CRITICAL", diff: "MEDIUM" },
     { id: "privilege-escalation", name: "Sudo GTFOBins Escalation", severity: "HIGH", diff: "MEDIUM" },
     { id: "network-recon", name: "Internal Nmap Network Recon", severity: "MEDIUM", diff: "EASY" },
