@@ -1,8 +1,10 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Dict, Any, List
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from typing import Dict, Any, List, Optional
 import time
+import uuid
 
 
 from app.config import settings
@@ -12,8 +14,13 @@ from app.schemas.hunt import Hunt, HuntPlanStep, HuntStatus, HypothesisState, Ex
 from app.schemas.evidence import Evidence, EvidenceSource
 from app.schemas.finding import Finding, Severity
 from app.telemetry.models import EvaluationReport, EvaluationRun
-from app.security.adversarial import AdversarialSecurityReport
-from app.hunting.engine import AutonomousHuntingEngine
+from app.security.adversarial import AdversarialSecurityReport, AdversarialTestEngine
+from app.hunting.engine import AutonomousHuntingEngine, HUNT_STATE_STORE
+from app.hunting.graph import InvestigationGraphBuilder
+from app.telemetry.generator import telemetry_engine
+from app.telemetry.evaluation import EvaluationEngine
+from app.telemetry.lab import EvaluationLabRunner, EVALUATION_RUN_STORE
+from app.core.security import check_rate_limit
 
 
 
@@ -33,23 +40,35 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from app.core.security import check_rate_limit
 
+# CORS: never combine a wildcard origin with credentials (browsers reject it
+# and it weakens the security posture). Fall back to explicit origins.
+_cors_origins = settings.cors_origin_list()
+_cors_allow_credentials = True
+if "*" in _cors_origins:
+    _cors_allow_credentials = False
+
 # Set up CORS middleware for frontend UI access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
 @app.middleware("http")
 async def add_security_headers_and_rate_limit(request: Request, call_next):
-    # Rate Limiting Check
+    # Rate Limiting Check (bounds from settings, overridable via .env)
     client_ip = request.client.host if request.client else "127.0.0.1"
-    allowed, msg = check_rate_limit(client_ip, max_requests=150, window_seconds=60)
+    allowed, msg = check_rate_limit(
+        client_ip,
+        max_requests=settings.RATE_LIMIT_MAX_REQUESTS,
+        window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS,
+    )
     if not allowed:
         return JSONResponse(status_code=429, content={"detail": msg})
 
+    request.state.request_id = f"req-{uuid.uuid4().hex[:12]}"
     response = await call_next(request)
     
     # Secure HTTP Headers
@@ -58,7 +77,30 @@ async def add_security_headers_and_rate_limit(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
+    response.headers["X-Request-ID"] = getattr(request.state, "request_id", "")
     return response
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+# In-memory cache for the expensive adversarial suite (re-running 8 full
+# hunts per GET was a self-inflicted DoS vector).
+_ADVERSARIAL_CACHE: Dict[str, Any] = {"report": None, "timestamp": 0.0}
+
+
+async def _get_cached_adversarial_report() -> AdversarialSecurityReport:
+    now = time.time()
+    ttl = settings.ADVERSARIAL_CACHE_TTL_SECONDS
+    cached = _ADVERSARIAL_CACHE["report"]
+    if cached is not None and (ttl <= 0 or now - _ADVERSARIAL_CACHE["timestamp"] < ttl):
+        return cached
+    report = await AdversarialTestEngine.run_security_test_suite()
+    _ADVERSARIAL_CACHE["report"] = report
+    _ADVERSARIAL_CACHE["timestamp"] = now
+    return report
 
 # Global Tool Gateway Instance
 gateway = ToolGateway()
@@ -117,13 +159,11 @@ async def execute_tool_endpoint(request: ToolExecutionRequest) -> ToolExecutionR
 @app.get(f"{settings.API_V1_STR}/telemetry/scenarios", tags=["Telemetry Engine"])
 async def list_telemetry_scenarios():
     """List all available synthetic security laboratory attack scenarios."""
-    from app.telemetry.generator import telemetry_engine
     return telemetry_engine.get_scenarios()
 
 @app.post(f"{settings.API_V1_STR}/telemetry/scenarios/select/{{scenario_id}}", tags=["Telemetry Engine"])
 async def select_telemetry_scenario(scenario_id: str):
     """Switch current active synthetic laboratory scenario."""
-    from app.telemetry.generator import telemetry_engine
     success = telemetry_engine.set_active_scenario(scenario_id)
     if not success:
         raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found.")
@@ -131,19 +171,18 @@ async def select_telemetry_scenario(scenario_id: str):
 
 @app.get(f"{settings.API_V1_STR}/telemetry/events", tags=["Telemetry Engine"])
 async def query_telemetry_events(
-    host: str = None,
-    user: str = None,
-    source_ip: str = None,
-    destination_ip: str = None,
-    event_type: str = None,
-    action: str = None,
-    status: str = None,
-    limit: int = 100
+    host: Optional[str] = Query(default=None, max_length=200),
+    user: Optional[str] = Query(default=None, max_length=200),
+    source_ip: Optional[str] = Query(default=None, max_length=50),
+    destination_ip: Optional[str] = Query(default=None, max_length=50),
+    event_type: Optional[str] = Query(default=None, max_length=50),
+    action: Optional[str] = Query(default=None, max_length=100),
+    status: Optional[str] = Query(default=None, max_length=20),
+    limit: int = Query(default=100, ge=1, le=500),
 ):
     """
     Telemetry Explorer API: Query raw synthetic enterprise telemetry events with filtering.
     """
-    from app.telemetry.generator import telemetry_engine
     from app.telemetry.models import EventFilter, EventType
 
     parsed_event_type = None
@@ -151,7 +190,10 @@ async def query_telemetry_events(
         try:
             parsed_event_type = EventType(event_type)
         except ValueError:
-            pass
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid event_type '{event_type}'. Valid values: {[e.value for e in EventType]}",
+            )
 
     flt = EventFilter(
         host=host,
@@ -167,9 +209,9 @@ async def query_telemetry_events(
     return [evt.model_dump() for evt in events]
 
 class EvaluateRequest(BaseModel):
-    scenario_id: str
+    scenario_id: str = Field(max_length=200)
     finding: Finding
-    evidence_list: List[Evidence] = []
+    evidence_list: List[Evidence] = Field(default_factory=list, max_length=500)
 
 @app.post(f"{settings.API_V1_STR}/telemetry/evaluate", response_model=EvaluationReport, tags=["Evaluation Engine"])
 async def evaluate_finding_against_ground_truth(req: EvaluateRequest) -> EvaluationReport:
@@ -177,9 +219,6 @@ async def evaluate_finding_against_ground_truth(req: EvaluateRequest) -> Evaluat
     Evaluation Engine API: Compare an AI Finding against hidden scenario Ground Truth metadata.
     Returns Precision, Recall, F1 Score, and Evidence Coverage %.
     """
-    from app.telemetry.generator import telemetry_engine
-    from app.telemetry.evaluation import EvaluationEngine
-
     gt = telemetry_engine.get_ground_truth(req.scenario_id)
     if not gt:
         raise HTTPException(status_code=404, detail=f"Ground truth metadata for scenario '{req.scenario_id}' not found.")
@@ -192,7 +231,6 @@ async def run_full_evaluation_benchmark():
     Run full AI Threat Hunter benchmark evaluation across all 8 attack scenarios.
     Calculates strict empirical Detection Rate, Precision, Recall, FP/FN rates, Evidence Coverage, and Tool Efficiency.
     """
-    from app.telemetry.lab import EvaluationLabRunner
     return await EvaluationLabRunner.run_full_benchmark()
 
 @app.get(f"{settings.API_V1_STR}/telemetry/lab/runs", tags=["Evaluation Lab"])
@@ -200,7 +238,6 @@ async def list_evaluation_runs():
     """
     List all historical evaluation benchmark runs for side-by-side reproducibility comparison.
     """
-    from app.telemetry.lab import EVALUATION_RUN_STORE
     return list(EVALUATION_RUN_STORE.values())
 
 @app.get(f"{settings.API_V1_STR}/telemetry/lab/runs/{{run_id}}", response_model=EvaluationRun, tags=["Evaluation Lab"])
@@ -208,7 +245,6 @@ async def get_evaluation_run_detail(run_id: str) -> EvaluationRun:
     """
     Fetch specific evaluation benchmark run details.
     """
-    from app.telemetry.lab import EVALUATION_RUN_STORE
     if run_id not in EVALUATION_RUN_STORE:
         raise HTTPException(status_code=404, detail=f"Evaluation run '{run_id}' not found.")
     return EVALUATION_RUN_STORE[run_id]
@@ -219,23 +255,22 @@ async def run_adversarial_security_suite():
     Run synthetic adversarial security test suite evaluating prompt injection resistance,
     log payload sanitization, zero tool policy violations, and context flooding defenses.
     """
-    from app.security.adversarial import AdversarialTestEngine
-    return await AdversarialTestEngine.run_security_test_suite()
+    _ADVERSARIAL_CACHE["report"] = None  # Force a fresh run on explicit POST.
+    return await _get_cached_adversarial_report()
 
 @app.get(f"{settings.API_V1_STR}/security/adversarial/results", response_model=AdversarialSecurityReport, tags=["Adversarial Security Lab"])
 async def get_latest_adversarial_security_results() -> AdversarialSecurityReport:
     """
     Retrieve latest adversarial security test suite report and system security boundaries disclosure.
     """
-    from app.security.adversarial import AdversarialTestEngine
-    return await AdversarialTestEngine.run_security_test_suite()
+    return await _get_cached_adversarial_report()
 
 
 
 
 
 class HuntRunRequest(BaseModel):
-    question: str
+    question: str = Field(min_length=1, max_length=2000)
     mode: ExecutionMode = ExecutionMode.AUTONOMOUS
 
 class HuntApproveRequest(BaseModel):
@@ -246,16 +281,17 @@ async def run_autonomous_hunt(request: HuntRunRequest) -> Hunt:
     """
     Execute a controlled threat hunt in ASSISTED or AUTONOMOUS mode.
     """
-    from app.hunting.engine import AutonomousHuntingEngine
     engine = AutonomousHuntingEngine()
-    return await engine.execute_hunt(question=request.question, mode=request.mode)
+    try:
+        return await engine.execute_hunt(question=request.question, mode=request.mode)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post(f"{settings.API_V1_STR}/hunts/{{hunt_id}}/approve", response_model=Hunt, tags=["Threat Hunting"])
 async def approve_assisted_tool_call(hunt_id: str, request: HuntApproveRequest) -> Hunt:
     """
     Approve or reject a pending tool execution request in ASSISTED mode.
     """
-    from app.hunting.engine import AutonomousHuntingEngine
     engine = AutonomousHuntingEngine()
     try:
         return await engine.resume_assisted_hunt(hunt_id=hunt_id, approved=request.approved)
@@ -268,7 +304,6 @@ async def get_hunt_audit_log(hunt_id: str):
     """
     Retrieve the complete reproducible audit trail for a hunt.
     """
-    from app.hunting.engine import HUNT_STATE_STORE
     if hunt_id not in HUNT_STATE_STORE:
         raise HTTPException(status_code=404, detail=f"Hunt '{hunt_id}' not found.")
     hunt = HUNT_STATE_STORE[hunt_id]
@@ -283,12 +318,11 @@ async def get_hunt_investigation_graph(hunt_id: str):
     """
     Retrieve the evidence-grounded Security Indicator relationship graph (IP -> USER -> HOST -> PROCESS -> FILE).
     """
-    from app.hunting.engine import HUNT_STATE_STORE
-    from app.hunting.graph import InvestigationGraphBuilder
-
     if hunt_id not in HUNT_STATE_STORE:
-        # Fallback for demo hunt
-        from app.schemas.evidence import Evidence, EvidenceSource
+        # Explicit demo alias only — unknown IDs are a 404, not silent
+        # sample data (the old fallback masked missing hunts from analysts).
+        if hunt_id != "demo":
+            raise HTTPException(status_code=404, detail=f"Hunt '{hunt_id}' not found.")
         sample_ev = [
             Evidence(
                 id="evd-ssh-bruteforce-01",
@@ -318,7 +352,7 @@ async def get_sample_hunt() -> Hunt:
     """
     Return a structured sample Hunt object demonstrating Phase 1-5 schema validation & UI layout.
     """
-    from app.schemas.hunt import StructuredHuntPlan, ExecutionTraceStep
+    from app.schemas.hunt import ExecutionTraceStep
     sample_evidence = Evidence(
         id="evd-ssh-bruteforce-01",
         source=EvidenceSource.AUTHENTICATION,

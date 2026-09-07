@@ -57,12 +57,15 @@ class TelemetrySanitizer:
         """
         Wraps untrusted security telemetry data in strict XML boundaries to prevent system instruction confusion.
         """
+        # Sanitize the tag name itself so a malicious source_name cannot break
+        # out of the XML boundary (alphanumeric + underscore only).
+        safe_source = re.sub(r"[^A-Z0-9_]", "", str(source_name).upper()) or "TELEMETRY_LOG"
         data_str = str(data)
         truncated = TelemetrySanitizer.truncate_payload(data_str, max_chars=8000)
         return (
-            f"<{source_name}_UNTRUSTED_DATA>\n"
+            f"<{safe_source}_UNTRUSTED_DATA>\n"
             f"{truncated}\n"
-            f"</{source_name}_UNTRUSTED_DATA>"
+            f"</{safe_source}_UNTRUSTED_DATA>"
         )
 
     @staticmethod

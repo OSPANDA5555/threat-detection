@@ -24,11 +24,16 @@ class TelemetryGenerator:
     Maintains clean separation between public telemetry queries and hidden ground truth.
     """
 
-    def __init__(self):
+    def __init__(self, base_time: Optional[datetime] = None, seed: Optional[int] = None):
         self._events: List[TelemetryEvent] = []
         self._scenarios: Dict[str, AttackScenario] = {}
         self._active_scenario_id: str = "ssh-bruteforce"
-        self._generate_dataset()
+        # Optional determinism hook for reproducible evaluation runs and
+        # tests: pass an explicit base_time (and seed for future randomized
+        # benign noise). Defaults preserve the existing live behavior.
+        if seed is not None:
+            random.seed(seed)
+        self._generate_dataset(base_time=base_time)
 
     def get_scenarios(self) -> List[Dict[str, Any]]:
         """Return public scenario metadata without ground truth details."""
@@ -96,9 +101,9 @@ class TelemetryGenerator:
         limit = min(filter_spec.limit, 500)
         return results[:limit]
 
-    def _generate_dataset(self):
+    def _generate_dataset(self, base_time: Optional[datetime] = None):
         """Build full synthetic dataset including benign activity and 8 attack scenarios."""
-        base_time = datetime.now(timezone.utc) - timedelta(hours=4)
+        base_time = base_time or (datetime.now(timezone.utc) - timedelta(hours=4))
         self._events.clear()
 
         # 1. Generate Benign Activity Baseline

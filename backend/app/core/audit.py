@@ -23,7 +23,8 @@ class AuditLogger:
         status: str,
         record_count: int = 0,
         execution_time_ms: float = 0.0,
-        error_message: str = None
+        error_message: str = None,
+        audit_id: str = None
     ) -> Dict[str, Any]:
         """
         Record a structured audit entry for every tool execution request.
@@ -38,5 +39,7 @@ class AuditLogger:
             "execution_time_ms": round(execution_time_ms, 2),
             "error": error_message
         }
+        if audit_id is not None:
+            audit_entry["audit_id"] = audit_id
         audit_logger.info(json.dumps(audit_entry))
         return audit_entry

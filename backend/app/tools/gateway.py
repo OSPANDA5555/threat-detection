@@ -4,9 +4,16 @@ import asyncio
 from typing import Dict, Any, List, Optional
 from app.config import settings
 from app.core.audit import AuditLogger
-from app.core.security import sanitize_input_string
+from app.core.security import sanitize_input_string, is_valid_ip
 from app.schemas.tool import ToolDefinition, ToolExecutionRequest, ToolExecutionResult
 from .definitions import INITIAL_TOOL_REGISTRY
+
+# Shell/control-flow markers that must never appear in string tool arguments.
+SHELL_PAYLOAD_MARKERS = (";", "&&", "||", "`", "$(", "<script>")
+
+# Params whose values must be valid IPs when provided (validated, not rejected
+# silently — invalid values return a clear REJECTED error).
+IP_PARAMS = {"source_ip", "src_ip", "dest_ip", "destination_ip", "client_ip", "ip"}
 
 class ToolGateway:
     """
@@ -42,7 +49,8 @@ class ToolGateway:
                 tool_name=tool_name,
                 arguments=args,
                 status="REJECTED",
-                error_message=err_msg
+                error_message=err_msg,
+                audit_id=audit_id
             )
             return ToolExecutionResult(
                 tool_name=tool_name,
@@ -52,13 +60,33 @@ class ToolGateway:
             )
 
         # 2. Read-Only Verification
-        if not tool_def.read_only or not settings.ENFORCE_READ_ONLY:
+        # NOTE: previously `not tool_def.read_only or not settings.ENFORCE_READ_ONLY`
+        # which (a) rejected EVERYTHING when enforcement was off and (b) let a
+        # non-read-only tool through whenever enforcement was on. Fixed: a tool
+        # must be declared read-only; the global switch is an additional kill-switch.
+        if not tool_def.read_only:
             err_msg = f"Security Violation: Tool '{tool_name}' violates read-only safety constraints."
             AuditLogger.log_tool_invocation(
                 tool_name=tool_name,
                 arguments=args,
                 status="REJECTED",
-                error_message=err_msg
+                error_message=err_msg,
+                audit_id=audit_id
+            )
+            return ToolExecutionResult(
+                tool_name=tool_name,
+                status="REJECTED",
+                error_message=err_msg,
+                audit_id=audit_id
+            )
+        if not settings.ENFORCE_READ_ONLY:
+            err_msg = "Security Violation: Tool execution disabled by server policy (ENFORCE_READ_ONLY=false)."
+            AuditLogger.log_tool_invocation(
+                tool_name=tool_name,
+                arguments=args,
+                status="REJECTED",
+                error_message=err_msg,
+                audit_id=audit_id
             )
             return ToolExecutionResult(
                 tool_name=tool_name,
@@ -74,7 +102,8 @@ class ToolGateway:
                 tool_name=tool_name,
                 arguments=args,
                 status="REJECTED",
-                error_message=validation_err
+                error_message=validation_err,
+                audit_id=audit_id
             )
             return ToolExecutionResult(
                 tool_name=tool_name,
@@ -106,7 +135,8 @@ class ToolGateway:
                 arguments=validated_args,
                 status="SUCCESS",
                 record_count=len(records),
-                execution_time_ms=elapsed_ms
+                execution_time_ms=elapsed_ms,
+                audit_id=audit_id
             )
 
             return ToolExecutionResult(
@@ -126,7 +156,8 @@ class ToolGateway:
                 arguments=validated_args,
                 status="TIMEOUT",
                 execution_time_ms=elapsed_ms,
-                error_message=err_msg
+                error_message=err_msg,
+                audit_id=audit_id
             )
             return ToolExecutionResult(
                 tool_name=tool_name,
@@ -143,7 +174,8 @@ class ToolGateway:
                 arguments=validated_args,
                 status="ERROR",
                 execution_time_ms=elapsed_ms,
-                error_message=err_msg
+                error_message=err_msg,
+                audit_id=audit_id
             )
             return ToolExecutionResult(
                 tool_name=tool_name,
@@ -156,11 +188,11 @@ class ToolGateway:
     def _validate_and_sanitize_args(self, tool_def: ToolDefinition, args: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[str]]:
         """Validate input arguments against registered tool parameter specs."""
         sanitized = {}
-        allowed_param_names = {p.name for p in tool_def.parameters}
+        param_by_name = {p.name: p for p in tool_def.parameters}
 
         # Reject unexpected parameter keys
         for key in args.keys():
-            if key not in allowed_param_names:
+            if key not in param_by_name:
                 return {}, f"Invalid Parameter: Argument '{key}' is not allowed for tool '{tool_def.name}'."
 
         # Check required parameters & set defaults
@@ -171,16 +203,38 @@ class ToolGateway:
                     return {}, f"Missing Required Parameter: '{param_spec.name}' is required for tool '{tool_def.name}'."
                 if param_spec.default is not None:
                     sanitized[param_spec.name] = param_spec.default
+                continue
+
+            # Type-aware validation & sanitization
+            if param_spec.type == "integer":
+                if isinstance(val, bool):
+                    return {}, f"Invalid Parameter: Argument '{param_spec.name}' must be an integer for tool '{tool_def.name}'."
+                try:
+                    ival = int(val)
+                except (ValueError, TypeError):
+                    return {}, f"Invalid Parameter: Argument '{param_spec.name}' must be an integer for tool '{tool_def.name}'."
+                if param_spec.name == "limit" and ival < 1:
+                    ival = 1
+                if param_spec.name == "time_window_hours" and not 1 <= ival <= 72:
+                    return {}, f"Invalid Parameter: Argument 'time_window_hours' must be between 1 and 72."
+                if param_spec.name == "dest_port" and not 1 <= ival <= 65535:
+                    return {}, f"Invalid Parameter: Argument 'dest_port' must be a valid port (1-65535)."
+                sanitized[param_spec.name] = ival
+            elif isinstance(val, str):
+                if len(val) > settings.MAX_STRING_ARG_CHARS:
+                    return {}, f"Invalid Parameter: Argument '{param_spec.name}' exceeds maximum length of {settings.MAX_STRING_ARG_CHARS} characters."
+                # Check for shell payload attempt markers BEFORE escaping
+                # (escaping first would transform e.g. <script> and weaken detection).
+                if any(marker in val for marker in SHELL_PAYLOAD_MARKERS):
+                    return {}, f"Security Alert: Malicious input pattern detected in argument '{param_spec.name}'."
+                cleaned_val = sanitize_input_string(val, max_length=settings.MAX_STRING_ARG_CHARS)
+                if param_spec.name in IP_PARAMS and cleaned_val:
+                    if not is_valid_ip(cleaned_val):
+                        return {}, f"Invalid Parameter: Argument '{param_spec.name}' must be a valid IPv4 address."
+                sanitized[param_spec.name] = cleaned_val
             else:
-                # Sanitize string inputs
-                if isinstance(val, str):
-                    cleaned_val = sanitize_input_string(val)
-                    # Check for shell payload attempt markers
-                    if any(shell_char in cleaned_val for shell_char in [";", "&&", "||", "`", "$( ", "<script>"]):
-                        return {}, f"Security Alert: Malicious input pattern detected in argument '{param_spec.name}'."
-                    sanitized[param_spec.name] = cleaned_val
-                else:
-                    sanitized[param_spec.name] = val
+                # Non-string scalars (bool/int already handled) pass through.
+                sanitized[param_spec.name] = val
 
         return sanitized, None
 
@@ -223,13 +277,28 @@ class ToolGateway:
                 limit=limit
             )
             events = telemetry_engine.query_events(flt)
-            return [evt.model_dump() for evt in events]
+            records = [evt.model_dump() for evt in events]
+            # Apply tool-specific metadata filters the generic EventFilter
+            # does not cover (previously these args were silently ignored).
+            if tool_name == "search_network_events":
+                records = self._apply_network_filters(records, args)
+            elif tool_name == "search_process_events":
+                records = self._apply_process_filters(records, args)
+            elif tool_name == "search_file_events":
+                records = self._apply_file_filters(records, args)
+            elif tool_name == "search_dns_events":
+                records = self._apply_dns_filters(records, args)
+            return records[:limit]
 
         # Host timeline query
         elif tool_name == "get_host_timeline":
             flt = EventFilter(host=host, limit=limit)
             events = telemetry_engine.query_events(flt)
-            return [evt.model_dump() for evt in events]
+            records = [evt.model_dump() for evt in events]
+            window_hours = args.get("time_window_hours")
+            if window_hours:
+                records = self._apply_time_window(records, window_hours)
+            return records[:limit]
 
         # IP activity query
         elif tool_name == "get_ip_activity":
@@ -251,6 +320,86 @@ class ToolGateway:
         elif tool_name == "get_alerts":
             flt = EventFilter(host=host, limit=limit)
             events = telemetry_engine.query_events(flt)
-            return [evt.model_dump() for evt in events if evt.status == "FAILURE" or evt.status == "DENIED"]
+            records = [evt.model_dump() for evt in events if evt.status == "FAILURE" or evt.status == "DENIED"]
+            # Severity filter maps onto event status where telemetry has no
+            # dedicated severity field (previously silently ignored).
+            severity = (args.get("severity") or "").upper()
+            if severity in ("CRITICAL", "HIGH"):
+                records = [r for r in records if r.get("status") in ("FAILURE", "DENIED")]
+            rule_name = (args.get("rule_name") or "").lower()
+            if rule_name:
+                records = [r for r in records
+                           if rule_name in str(r.get("action", "")).lower()
+                           or rule_name in str((r.get("metadata") or {}))[:2000].lower()]
+            return records[:limit]
 
         return []
+
+    # -- Tool-specific metadata post-filters (pure functions, easy to test) --
+
+    @staticmethod
+    def _meta(record: Dict[str, Any]) -> Dict[str, Any]:
+        return record.get("metadata") or {}
+
+    @staticmethod
+    def _contains(haystack: Any, needle: str) -> bool:
+        return needle.lower() in str(haystack or "").lower()
+
+    def _apply_network_filters(self, records: List[Dict[str, Any]], args: Dict[str, Any]) -> List[Dict[str, Any]]:
+        dest_port = args.get("dest_port")
+        if dest_port is not None:
+            records = [r for r in records if self._meta(r).get("dest_port") == dest_port]
+        protocol = args.get("protocol")
+        if protocol:
+            records = [r for r in records if str(self._meta(r).get("protocol", "")).upper() == str(protocol).upper()]
+        return records
+
+    def _apply_process_filters(self, records: List[Dict[str, Any]], args: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if args.get("process_name"):
+            records = [r for r in records
+                       if self._contains(self._meta(r).get("process_name"), args["process_name"])]
+        if args.get("command_line"):
+            records = [r for r in records
+                       if self._contains(self._meta(r).get("command_line"), args["command_line"])]
+        if args.get("parent_process"):
+            records = [r for r in records
+                       if self._contains(self._meta(r).get("parent_process"), args["parent_process"])]
+        return records
+
+    def _apply_file_filters(self, records: List[Dict[str, Any]], args: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if args.get("file_path"):
+            records = [r for r in records
+                       if self._contains(self._meta(r).get("file_path"), args["file_path"])
+                       or self._contains(self._meta(r).get("filepath"), args["file_path"])
+                       or self._contains(self._meta(r).get("filename"), args["file_path"])]
+        if args.get("file_hash"):
+            records = [r for r in records
+                       if self._contains(self._meta(r).get("file_hash"), args["file_hash"])
+                       or self._contains(self._meta(r).get("sha256"), args["file_hash"])
+                       or self._contains(self._meta(r).get("md5"), args["file_hash"])]
+        return records
+
+    def _apply_dns_filters(self, records: List[Dict[str, Any]], args: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if args.get("record_type"):
+            records = [r for r in records
+                       if str(self._meta(r).get("record_type", "")).upper() == str(args["record_type"]).upper()]
+        return records
+
+    @staticmethod
+    def _apply_time_window(records: List[Dict[str, Any]], window_hours: int) -> List[Dict[str, Any]]:
+        """Keep only records within the last `window_hours` (ISO timestamps)."""
+        from datetime import datetime, timezone, timedelta
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=int(window_hours))
+        except (ValueError, TypeError):
+            return records
+        kept = []
+        for r in records:
+            try:
+                ts = datetime.fromisoformat(str(r.get("timestamp", "")).replace("Z", "+00:00"))
+            except ValueError:
+                kept.append(r)  # Keep unparseable timestamps rather than dropping evidence.
+                continue
+            if ts >= cutoff:
+                kept.append(r)
+        return kept

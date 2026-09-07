@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
-from app.schemas.hunt import Hunt, HuntPlanStep
+from app.schemas.hunt import Hunt, HuntPlanStep, StructuredHuntPlan, HypothesisState
 from app.schemas.evidence import Evidence
 from app.schemas.finding import Finding
 from app.schemas.tool import ToolDefinition, ToolExecutionRequest
@@ -17,13 +17,23 @@ class BaseAIProvider(ABC):
         pass
 
     @abstractmethod
-    async def generate_hunt_plan(self, question: str, hypothesis: str, available_tools: List[ToolDefinition]) -> List[HuntPlanStep]:
+    async def generate_hunt_plan(
+        self,
+        question: str,
+        hypothesis: Optional[str] = None,
+        available_tools: Optional[List[ToolDefinition]] = None,
+    ) -> StructuredHuntPlan:
         """Generate a multi-step investigation hunt plan using available registered read-only tools."""
         pass
 
     @abstractmethod
     async def select_tools(self, current_step: HuntPlanStep, available_tools: List[ToolDefinition]) -> List[ToolExecutionRequest]:
         """Select appropriate registered tool requests for a specific plan step."""
+        pass
+
+    @abstractmethod
+    async def assess_hypothesis_state(self, hypothesis: str, evidence_list: List[Evidence]) -> HypothesisState:
+        """Assess whether collected evidence supports, refutes, or is inconclusive for the hypothesis."""
         pass
 
     @abstractmethod
