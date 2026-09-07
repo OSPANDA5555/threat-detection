@@ -154,12 +154,12 @@ export default function TelemetryExplorer({ onNavigateToHunt }) {
           <Database size={24} color="var(--accent-blue)" />
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#f8fafc' }}>
-                CROSS-WORKSTATION TELEMETRY & MULTI-LOG COLLECTOR
+              <h2 className="page-title">
+                Telemetry collector
               </h2>
-              <span className="badge badge-info">MULTI-HOST CORRELATION</span>
+              <span className="badge badge-info">Multi-host correlation</span>
             </div>
-            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+            <p className="page-subtitle">
               Ingest, aggregate, and normalize telemetry from distributed endpoints (Auth, Process, NetFlow, DNS, File integrity).
             </p>
           </div>
@@ -192,8 +192,8 @@ export default function TelemetryExplorer({ onNavigateToHunt }) {
         
         {/* Row 1: Target Workstations & Endpoints */}
         <div>
-          <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-dim)', letterSpacing: '0.04em', marginBottom: '8px' }}>
-            1. SELECT TARGET ENDPOINTS & WORKSTATIONS TO COLLECT:
+          <div className="section-label" style={{ marginBottom: '8px' }}>
+            1. Target endpoints
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {WORKSTATION_OPTIONS.map(ws => {
@@ -226,8 +226,8 @@ export default function TelemetryExplorer({ onNavigateToHunt }) {
 
         {/* Row 2: Log Source Streams */}
         <div>
-          <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-dim)', letterSpacing: '0.04em', marginBottom: '8px' }}>
-            2. AGGREGATE LOG TYPES & SOURCES:
+          <div className="section-label" style={{ marginBottom: '8px' }}>
+            2. Log sources
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {LOG_SOURCE_OPTIONS.map(src => {
@@ -274,21 +274,10 @@ export default function TelemetryExplorer({ onNavigateToHunt }) {
           <button
             onClick={handleCollectData}
             disabled={loading}
-            style={{
-              background: 'var(--accent-blue)',
-              color: '#ffffff',
-              fontWeight: 800,
-              padding: '8px 18px',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '0.78rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              cursor: 'pointer'
-            }}
+            className="btn btn-primary"
           >
             <RefreshCw size={14} className={loading ? 'spin' : ''} />
-            {loading ? 'COLLECTING LOGS...' : 'COLLECT & CORRELATE LOGS'}
+            {loading ? 'Collecting…' : 'Collect & correlate'}
           </button>
         </div>
 
@@ -335,8 +324,8 @@ export default function TelemetryExplorer({ onNavigateToHunt }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Layers size={16} color="var(--accent-blue)" />
-              <h3 style={{ fontSize: '0.90rem', fontWeight: 800, color: '#f8fafc' }}>
-                CORRELATED TELEMETRY STREAM ({filteredEvents.length} EVENTS)
+              <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#f8fafc' }}>
+                Telemetry stream <span className="metric-value" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>({filteredEvents.length})</span>
               </h3>
             </div>
 
@@ -376,6 +365,16 @@ export default function TelemetryExplorer({ onNavigateToHunt }) {
                 </tr>
               </thead>
               <tbody>
+                {filteredEvents.length === 0 && (
+                  <tr>
+                    <td colSpan={8}>
+                      <div className="empty-state">
+                        No events collected yet.<br />
+                        Select endpoints above and run “Collect & correlate”.
+                      </div>
+                    </td>
+                  </tr>
+                )}
                 {filteredEvents.map((evt, idx) => (
                   <tr
                     key={idx}

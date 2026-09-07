@@ -21,11 +21,11 @@ export default function AIExplanationCard({ currentHunt, onSelectEvidenceId }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Cpu size={18} color="var(--accent-blue)" />
-          <h3 style={{ fontSize: '0.92rem', fontWeight: 800, color: '#f8fafc' }}>
-            AI INVESTIGATION REASONING & ANALYSIS
+          <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#f8fafc' }}>
+            Reasoning
           </h3>
         </div>
-        <span className="badge badge-info">EVIDENCE-GROUNDED REASONING</span>
+        <span className="badge badge-info">Evidence-grounded</span>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
@@ -33,7 +33,7 @@ export default function AIExplanationCard({ currentHunt, onSelectEvidenceId }) {
         {/* 1. WHAT WE THINK */}
         <div className="soc-card-subtle" style={{ borderLeft: '3px solid var(--accent-blue)' }}>
           <div style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--accent-blue)', marginBottom: '6px', letterSpacing: '0.05em' }}>
-            1. WHAT WE THINK
+            1. HYPOTHESIS
           </div>
           <p style={{ fontSize: '0.86rem', color: '#f8fafc', fontWeight: 700, lineHeight: 1.4 }}>
             "{hypothesis}"
@@ -43,7 +43,7 @@ export default function AIExplanationCard({ currentHunt, onSelectEvidenceId }) {
         {/* 2. WHY WE THINK IT */}
         <div className="soc-card-subtle" style={{ borderLeft: '3px solid var(--status-purple)' }}>
           <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#c084fc', marginBottom: '6px', letterSpacing: '0.05em' }}>
-            2. WHY WE THINK IT
+            2. SUPPORTING OBSERVATION
           </div>
           <p style={{ fontSize: '0.82rem', color: '#cbd5e1', lineHeight: 1.4 }}>
             {primaryFinding?.description || "Observed high-confidence telemetry logs matching known threat pattern vectors."}
@@ -114,7 +114,7 @@ export default function AIExplanationCard({ currentHunt, onSelectEvidenceId }) {
               }}
             >
               {copied ? <Check size={12} /> : <Copy size={12} />}
-              {copied ? 'COPIED' : 'COPY'}
+              {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
           <p style={{ fontSize: '0.78rem', color: '#e2e8f0', lineHeight: 1.4 }}>

@@ -27,6 +27,16 @@
   --text-muted: #94a3b8;
   --text-dim: #64748b;
 
+  /* Legacy aliases — consolidated onto the single blue accent + semantic
+     palette so older components resolve to the same professional tokens. */
+  --primary-cyan: #60a5fa;
+  --primary-blue: #3b82f6;
+  --accent-crimson: #f87171;
+  --accent-emerald: #34d399;
+  --accent-amber: #fbbf24;
+  --accent-purple: #a78bfa;
+  --border-glow: rgba(59, 130, 246, 0.35);
+
   --font-sans: 'Inter', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 
@@ -60,15 +70,12 @@ button {
   cursor: pointer;
   border: none;
   outline: none;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
-button:hover {
-  transform: translateY(-1px);
-}
-
-button:active {
-  transform: translateY(0);
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 input, textarea, select {
@@ -101,6 +108,120 @@ input:focus, textarea:focus, select:focus {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: 14px 18px;
+}
+
+/* Legacy glass-card alias: identical treatment to soc-card so older
+   panels render consistently with the rest of the workstation. */
+.glass-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* Shared button primitives — use these instead of one-off inline styles. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.btn-primary {
+  background: var(--accent-blue);
+  color: #ffffff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-blue-hover);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--border-color);
+}
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text-main);
+  border-color: var(--text-dim);
+}
+
+.btn-danger-ghost {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.btn-danger-ghost:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+}
+
+.btn-success-solid {
+  background: #16a34a;
+  color: #ffffff;
+}
+.btn-success-solid:hover:not(:disabled) {
+  background: #15803d;
+}
+
+/* Neutral metadata tag — color is reserved for status and severity. */
+.tag-neutral {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  font-family: var(--font-mono);
+}
+
+/* Professional type scale: sentence-case titles, tracked micro-labels. */
+.page-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.page-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Tabular numerals for every metric value. */
+.metric-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Empty states for tables and lists. */
+.empty-state {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  padding: 28px 16px;
+  line-height: 1.6;
 }
 
 /* Minimalist Status Badges */

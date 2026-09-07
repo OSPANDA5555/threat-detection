@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, Network, Server, User, Globe, FileText, Cpu, Key, ArrowRight, Database, Link as LinkIcon, Box } from 'lucide-react';
-import Attack3DVisualizer from './Attack3DVisualizer';
+import { Network, Server, User, Globe, FileText, Cpu, ArrowRight } from 'lucide-react';
 
 export default function InvestigationGraph({ activeHunt, onSelectEvidenceId }) {
   const [graphData, setGraphData] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
   const [filterType, setFilterType] = useState('ALL');
-  const [viewMode, setViewMode] = useState('3D'); // '3D' or '2D'
   const [loading, setLoading] = useState(true);
 
   const huntId = activeHunt?.id || 'hunt-demo-ssh-01';
@@ -63,59 +61,23 @@ export default function InvestigationGraph({ activeHunt, onSelectEvidenceId }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       
-      {/* HEADER & VIEW TOGGLE */}
+      {/* HEADER */}
       <div className="soc-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <Network size={20} color="var(--accent-blue)" />
-          <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#f8fafc' }}>
-            INVESTIGATION GRAPH & 3D ATTACK RECONSTRUCTION
+        <div>
+          <h2 className="page-title">
+            <Network size={18} color="var(--accent-blue)" />
+            Investigation graph
           </h2>
+          <p className="page-subtitle">
+            Entity relationships grounded in collected evidence: IP → user → host → process → file.
+          </p>
         </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {/* VIEW MODE TOGGLE (3D VISUALS VS 2D GRAPH) */}
-          <div style={{ display: 'flex', background: 'var(--bg-subtle)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', padding: '2px' }}>
-            <button
-              onClick={() => setViewMode('3D')}
-              style={{
-                background: viewMode === '3D' ? 'var(--accent-blue)' : 'transparent',
-                color: viewMode === '3D' ? '#ffffff' : 'var(--text-dim)',
-                padding: '5px 14px',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '0.75rem',
-                fontWeight: 800,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px'
-              }}
-            >
-              <Box size={14} />
-              3D ATTACK VISUALS & COMPARISON
-            </button>
-            <button
-              onClick={() => setViewMode('2D')}
-              style={{
-                background: viewMode === '2D' ? 'var(--accent-blue)' : 'transparent',
-                color: viewMode === '2D' ? '#ffffff' : 'var(--text-dim)',
-                padding: '5px 14px',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '0.75rem',
-                fontWeight: 800,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px'
-              }}
-            >
-              <Layers size={14} />
-              2D ENTITY GRAPH
-            </button>
-          </div>
-        </div>
+        <span className="tag-neutral">{graphData?.nodes?.length || 0} nodes · {graphData?.edges?.length || 0} edges</span>
       </div>
 
-      {/* VIEW CONTENT */}
-      {viewMode === '3D' ? (
-        <Attack3DVisualizer onSelectEvidence={onSelectEvidenceId} />
+      {/* ENTITY GRAPH */}
+      {loading ? (
+        <div className="soc-card empty-state">Loading entity graph…</div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '20px' }}>
           
@@ -165,7 +127,6 @@ export default function InvestigationGraph({ activeHunt, onSelectEvidenceId }) {
                         borderRadius: 'var(--radius-md)',
                         padding: '12px 16px',
                         cursor: 'pointer',
-                        boxShadow: selectedNode?.id === node.id ? `0 0 14px ${getNodeColor(node.type)}40` : 'none',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '10px'
@@ -199,7 +160,6 @@ export default function InvestigationGraph({ activeHunt, onSelectEvidenceId }) {
                         borderRadius: 'var(--radius-md)',
                         padding: '12px 16px',
                         cursor: 'pointer',
-                        boxShadow: selectedNode?.id === node.id ? `0 0 14px ${getNodeColor(node.type)}40` : 'none',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '10px'
@@ -233,7 +193,6 @@ export default function InvestigationGraph({ activeHunt, onSelectEvidenceId }) {
                         borderRadius: 'var(--radius-md)',
                         padding: '12px 16px',
                         cursor: 'pointer',
-                        boxShadow: selectedNode?.id === node.id ? `0 0 14px ${getNodeColor(node.type)}40` : 'none',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '10px'

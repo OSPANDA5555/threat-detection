@@ -16,6 +16,7 @@ export default function SystemHealth({ healthData }) {
     { name: "search_file_events", desc: "Search file system modification & SHA256 hashes", read_only: true, max_cap: 500, default_args: '{"host": "web-server-01", "action": "MODIFY", "limit": 10}' },
     { name: "get_host_timeline", desc: "Retrieve unified event timeline for a host", read_only: true, max_cap: 500, default_args: '{"host": "web-server-01", "time_window_hours": 24}' },
     { name: "get_ip_activity", desc: "Summarize network/auth activity for an IP", read_only: true, max_cap: 500, default_args: '{"ip": "192.168.100.99", "limit": 10}' },
+    { name: "get_domain_activity", desc: "Fetch resolution history for a domain", read_only: true, max_cap: 500, default_args: '{"domain": "attacker-domain.com", "limit": 10}' },
     { name: "get_alerts", desc: "Query existing SIEM/EDR alert telemetry", read_only: true, max_cap: 500, default_args: '{"host": "web-server-01", "severity": "HIGH"}' },
     { name: "collect_workstation_telemetry", desc: "Aggregate & correlate logs across multiple workstations", read_only: true, max_cap: 500, default_args: '{"hosts": "workstation-01,web-server-01", "log_sources": "auth,process,network", "limit": 25}' }
   ];
@@ -94,18 +95,18 @@ export default function SystemHealth({ healthData }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       
       {/* Top Gateway Health Status Card */}
-      <div className="soc-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderLeft: '4px solid var(--status-green)' }}>
+      <div className="soc-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', borderLeft: '3px solid var(--status-green)' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
-            <Server size={20} color="var(--status-green)" />
-            <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#f8fafc' }}>ZERO-TRUST TOOL GATEWAY INSPECTOR</h2>
+            <Server size={18} color="var(--status-green)" />
+            <h2 className="page-title">Tool gateway inspector</h2>
           </div>
-          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-            Strict read-only safety policy, argument schema validation, hard caps (500 events max), timeout bounds (300s), and immutable audit logging.
+          <p className="page-subtitle">
+            Read-only safety policy, argument schema validation, capped results (500 events max, 5s tool timeout), and audit logging.
           </p>
         </div>
-        <span className="badge badge-success" style={{ padding: '6px 14px', fontSize: '0.78rem' }}>
-          GATEWAY STATUS: ACTIVE
+        <span className="badge badge-success">
+          Gateway active
         </span>
       </div>
 

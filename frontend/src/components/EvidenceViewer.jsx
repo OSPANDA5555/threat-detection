@@ -1,5 +1,10 @@
 import React from 'react';
-import { Database, Search, Filter, Hash, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Database } from 'lucide-react';
+
+const formatConfidence = (value) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return 'Not scored';
+  return `Confidence ${Math.round(value * 100)}%`;
+};
 
 export default function EvidenceViewer({ evidenceList }) {
   const sampleEvidence = evidenceList && evidenceList.length > 0 ? evidenceList : [
@@ -21,29 +26,29 @@ export default function EvidenceViewer({ evidenceList }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div className="glass-card" style={{ padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="glass-card" style={{ padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <div>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Database size={20} color="var(--primary-cyan)" />
-            COLLECTED SECURITY EVIDENCE STORE
+          <h2 className="page-title">
+            <Database size={18} color="var(--accent-blue)" />
+            Evidence store
           </h2>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-            All AI findings must trace directly to normalized, cryptographically referenced evidence records below.
+          <p className="page-subtitle">
+            Every finding traces to normalized, referenced evidence records below.
           </p>
         </div>
-        <span className="badge badge-info">{sampleEvidence.length} VERIFIED EVIDENCE RECORDS</span>
+        <span className="tag-neutral">{sampleEvidence.length} verified records</span>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {sampleEvidence.map((item, idx) => (
           <div key={idx} className="glass-card" style={{ padding: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '0.9rem', fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--primary-cyan)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.9rem', fontFamily: 'var(--font-mono)', fontWeight: 700, color: '#e2e8f0' }}>
                   {item.id}
                 </span>
-                <span className="badge badge-purple">SOURCE: {item.source.toUpperCase()}</span>
-                <span className="badge badge-success">CONFIDENCE: {Math.round(item.confidence * 100)}%</span>
+                <span className="tag-neutral">Source: {String(item.source).toUpperCase()}</span>
+                <span className="tag-neutral">{formatConfidence(item.confidence)}</span>
               </div>
               <span style={{ fontSize: '0.8rem', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
                 {item.timestamp}
@@ -51,7 +56,7 @@ export default function EvidenceViewer({ evidenceList }) {
             </div>
 
             <p style={{ fontSize: '0.95rem', fontWeight: 600, color: '#e2e8f0', marginBottom: '14px', lineHeight: 1.5 }}>
-              <strong style={{ color: 'var(--primary-cyan)' }}>Relevance Reasoning: </strong>
+              <strong style={{ color: 'var(--text-muted)', fontWeight: 700 }}>Relevance: </strong>
               {item.relevance}
             </p>
 

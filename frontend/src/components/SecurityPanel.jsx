@@ -60,13 +60,13 @@ export default function SecurityPanel() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       
       {/* SECURITY DASHBOARD HEADER */}
-      <div className="soc-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderLeft: '4px solid var(--accent-blue)' }}>
+      <div className="soc-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', borderLeft: '3px solid var(--accent-blue)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <Lock size={22} color="var(--accent-blue)" />
+          <Lock size={20} color="var(--accent-blue)" />
           <div>
-            <h2 style={{ fontSize: '1.15rem', fontWeight: 800 }}>ADVERSARIAL AI SECURITY & RESILIENCE TESTING</h2>
-            <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
-              Evaluates AI Threat Hunter resilience against indirect prompt injections, log payload tampering, evidence poisoning, and token context flooding.
+            <h2 className="page-title">Adversarial security testing</h2>
+            <p className="page-subtitle">
+              Measures hunter resilience to prompt injection, log tampering, evidence poisoning, and context flooding.
             </p>
           </div>
         </div>
@@ -74,20 +74,10 @@ export default function SecurityPanel() {
         <button
           onClick={handleRunSecurityTests}
           disabled={isRunningTests}
-          style={{
-            background: '#2563eb',
-            color: '#ffffff',
-            padding: '10px 20px',
-            borderRadius: 'var(--radius-sm)',
-            fontWeight: 800,
-            fontSize: '0.82rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
+          className="btn btn-primary"
         >
-          {isRunningTests ? <RefreshCw size={16} className="spin" /> : <ShieldAlert size={16} />}
-          {isRunningTests ? 'TESTING ADVERSARIAL CASES...' : 'RUN ADVERSARIAL SECURITY SUITE'}
+          {isRunningTests ? <RefreshCw size={15} className="spin" /> : <ShieldAlert size={15} />}
+          {isRunningTests ? 'Running…' : 'Run security suite'}
         </button>
       </div>
 

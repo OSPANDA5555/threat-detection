@@ -15,8 +15,8 @@ export default function EvidenceContextPanel({ selectedEvidence, timelineEvents,
       <div className="soc-card soc-inspector-right" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px' }}>
           <Clock size={16} color="var(--accent-blue)" />
-          <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#f8fafc' }}>
-            INVESTIGATION CHRONOLOGY
+          <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#f8fafc' }}>
+            Chronology
           </div>
         </div>
 
@@ -80,8 +80,8 @@ export default function EvidenceContextPanel({ selectedEvidence, timelineEvents,
             {copiedId ? <Check size={12} /> : <Copy size={12} />}
           </button>
         </div>
-        <button onClick={onClose} style={{ background: 'transparent', color: 'var(--text-dim)', fontSize: '0.78rem', fontWeight: 700 }}>
-          ✕ CLOSE
+        <button onClick={onClose} className="btn btn-ghost" style={{ fontSize: '0.75rem', padding: '4px 10px' }}>
+          Close
         </button>
       </div>
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Activity, Terminal, Database, FileText, Server, Lock, Download, Layers, UserCheck, Zap, Clock, Cpu } from 'lucide-react';
 
-export default function Navigation({ activeTab, setActiveTab, activeHunt, healthData, onOpenReport, executionMode, setExecutionMode }) {
+export default function Navigation({ activeTab, setActiveTab, activeHunt, healthData, apiLatencyMs, onOpenReport, executionMode, setExecutionMode }) {
   const [utcTime, setUtcTime] = useState('');
 
   useEffect(() => {
@@ -94,7 +94,9 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
             <div style={{ height: '12px', width: '1px', background: 'var(--border-color)' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
               <Cpu size={13} color="var(--status-green)" />
-              <span style={{ color: 'var(--text-muted)' }}>0.4ms</span>
+              <span className="metric-value" style={{ color: 'var(--text-muted)' }} title="Last /health round-trip">
+                {apiLatencyMs == null ? '—' : `${apiLatencyMs}ms`}
+              </span>
             </div>
           </div>
 
@@ -115,7 +117,7 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
               }}
             >
               <Zap size={12} />
-              AUTONOMOUS
+              Autonomous
             </button>
             <button
               onClick={() => setExecutionMode('ASSISTED')}
@@ -132,7 +134,7 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
               }}
             >
               <UserCheck size={12} />
-              ASSISTED
+              Assisted
             </button>
           </div>
 
@@ -151,7 +153,7 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
             }}
           >
             <Download size={13} />
-            EXPORT REPORT
+            Export report
           </button>
 
           {/* Gateway Status Badge */}
@@ -168,7 +170,7 @@ export default function Navigation({ activeTab, setActiveTab, activeHunt, health
             borderRadius: 'var(--radius-sm)'
           }}>
             <span className="pulse-dot" style={{ background: isHealthy ? 'var(--status-green)' : 'var(--status-red)', width: '6px', height: '6px' }} />
-            {isHealthy ? 'GATEWAY ONLINE' : 'OFFLINE'}
+            {isHealthy ? 'Gateway online' : 'Offline'}
           </div>
 
         </div>

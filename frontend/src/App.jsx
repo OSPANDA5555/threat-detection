@@ -146,7 +146,7 @@ export const FALLBACK_HEALTH_DATA = {
   tool_gateway: {
     status: "ACTIVE",
     enforce_read_only: true,
-    registered_tools_count: 9,
+    registered_tools_count: 11,
     max_tool_result_count: 500,
     timeout_seconds: 5.0
   },
@@ -166,18 +166,24 @@ export default function App() {
   const [activeScenarioId, setActiveScenarioId] = useState("ssh-bruteforce");
   const [executionMode, setExecutionMode] = useState("AUTONOMOUS");
   const [isReportOpen, setIsReportOpen] = useState(false);
+  const [apiLatencyMs, setApiLatencyMs] = useState(null);
 
   useEffect(() => {
-    // Fetch system health status with fallback
+    // Fetch system health status with fallback (timed for the header readout)
+    const started = performance.now();
     fetch('/api/v1/health')
       .then(res => {
         if (!res.ok) throw new Error("Health non-200 response");
         return res.json();
       })
-      .then(data => setHealthData(data))
+      .then(data => {
+        setHealthData(data);
+        setApiLatencyMs(Math.round(performance.now() - started));
+      })
       .catch(err => {
         console.warn("Backend offline or non-API deployment; using active standalone fallback health data.");
         setHealthData(FALLBACK_HEALTH_DATA);
+        setApiLatencyMs(null);
       });
 
     // Fetch sample hunt data with fallback
@@ -205,6 +211,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         activeHunt={sampleHunt}
         healthData={healthData}
+        apiLatencyMs={apiLatencyMs}
         onOpenReport={() => setIsReportOpen(true)}
         executionMode={executionMode}
         setExecutionMode={setExecutionMode}

@@ -106,13 +106,13 @@ export default function EvaluationPanel({ sampleHunt }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       
       {/* EVALUATION LAB HEADER & BENCHMARK TRIGGER */}
-      <div className="soc-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div className="soc-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <Activity size={22} color="var(--accent-blue)" />
+          <Activity size={20} color="var(--accent-blue)" />
           <div>
-            <h2 style={{ fontSize: '1.15rem', fontWeight: 800 }}>AI THREAT-HUNTING EVALUATION LAB</h2>
-            <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
-              Quantitative evaluation harness comparing AI Threat Hunter findings against hidden synthetic Ground Truth metadata.
+            <h2 className="page-title">Evaluation lab</h2>
+            <p className="page-subtitle">
+              Compares hunter findings against hidden ground-truth metadata.
             </p>
           </div>
         </div>
@@ -143,20 +143,10 @@ export default function EvaluationPanel({ sampleHunt }) {
           <button
             onClick={handleRunBenchmark}
             disabled={isRunningBenchmark}
-            style={{
-              background: '#2563eb',
-              color: '#ffffff',
-              padding: '10px 20px',
-              borderRadius: 'var(--radius-sm)',
-              fontWeight: 800,
-              fontSize: '0.82rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}
+            className="btn btn-primary"
           >
-            {isRunningBenchmark ? <RefreshCw size={16} className="spin" /> : <Play size={16} />}
-            {isRunningBenchmark ? 'RUNNING BENCHMARK SUITE...' : 'RUN FULL BENCHMARK SUITE'}
+            {isRunningBenchmark ? <RefreshCw size={15} className="spin" /> : <Play size={15} />}
+            {isRunningBenchmark ? 'Running…' : 'Run full benchmark'}
           </button>
         </div>
       </div>

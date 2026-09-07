@@ -274,23 +274,25 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          gap: '12px',
+          flexWrap: 'wrap',
           fontSize: '0.78rem'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <ShieldAlert size={16} color="var(--accent-blue)" />
-            <span style={{ fontWeight: 700, color: '#fafafa' }}>
-              AUTONOMY LIMITS:
+            <span style={{ fontWeight: 700, color: '#fafafa', whiteSpace: 'nowrap' }}>
+              Autonomy limits
             </span>
-            <span className="badge badge-info">
-              {executionMode === 'AUTONOMOUS' ? 'AUTONOMOUS (READ-ONLY APPROVED)' : 'ASSISTED (ANALYST APPROVAL REQUIRED)'}
+            <span className="badge badge-info" style={{ whiteSpace: 'nowrap' }}>
+              {executionMode === 'AUTONOMOUS' ? 'Autonomous' : 'Assisted'}
             </span>
           </div>
 
-          <div style={{ display: 'flex', gap: '16px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-            <div>TOOL CALLS: <strong style={{ color: '#fafafa' }}>{currentHunt?.toolCallsExecuted || 0} / 10</strong></div>
-            <div>ITERATION: <strong style={{ color: '#fafafa' }}>{currentHunt?.iterationCount || 1} / 5</strong></div>
-            <div>TIMEOUT: <strong style={{ color: '#fafafa' }}>300s</strong></div>
-            <div>EVENT CAP: <strong style={{ color: '#fafafa' }}>1000/call</strong></div>
+          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            <div>TOOL CALLS: <strong className="metric-value" style={{ color: '#fafafa' }}>{currentHunt?.toolCallsExecuted || 0} / 10</strong></div>
+            <div>ITERATION: <strong className="metric-value" style={{ color: '#fafafa' }}>{currentHunt?.iterationCount || currentHunt?.currentIteration || 1} / 5</strong></div>
+            <div>HUNT TIMEOUT: <strong style={{ color: '#fafafa' }}>300s</strong></div>
+            <div>EVENT CAP: <strong style={{ color: '#fafafa' }}>500/call</strong></div>
           </div>
         </div>
 
@@ -309,9 +311,9 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                 <AlertTriangle size={18} color="#fbbf24" />
                 <strong style={{ color: '#fbbf24', fontSize: '0.9rem' }}>
-                  ASSISTED MODE: ANALYST TOOL APPROVAL REQUIRED
+                  Approval required
                 </strong>
-                <span className="badge badge-warning">STEP {currentHunt.pendingApproval.step_number} PENDING</span>
+                <span className="badge badge-warning">Step {currentHunt.pendingApproval.step_number} pending</span>
               </div>
               <p style={{ fontSize: '0.82rem', color: '#e4e4e7', marginBottom: '6px' }}>
                 {currentHunt.pendingApproval.reasoning}
@@ -325,37 +327,16 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
               <button
                 onClick={() => handleToolApproval(false)}
                 disabled={isHunting}
-                style={{
-                  background: 'rgba(220, 38, 38, 0.2)',
-                  border: '1px solid #dc2626',
-                  color: '#f87171',
-                  padding: '8px 16px',
-                  borderRadius: 'var(--radius-sm)',
-                  fontWeight: 700,
-                  fontSize: '0.8rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}
+                className="btn btn-danger-ghost"
               >
-                <X size={14} /> REJECT
+                <X size={14} /> Reject
               </button>
               <button
                 onClick={() => handleToolApproval(true)}
                 disabled={isHunting}
-                style={{
-                  background: '#16a34a',
-                  color: '#ffffff',
-                  padding: '8px 18px',
-                  borderRadius: 'var(--radius-sm)',
-                  fontWeight: 800,
-                  fontSize: '0.8rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}
+                className="btn btn-success-solid"
               >
-                <Check size={14} /> APPROVE TOOL EXECUTION
+                <Check size={14} /> Approve & run
               </button>
             </div>
           </div>
@@ -381,19 +362,11 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
             <button
               onClick={handleStartHunt}
               disabled={isHunting}
-              style={{
-                background: executionMode === 'ASSISTED' ? '#d97706' : '#2563eb',
-                color: '#fff',
-                fontWeight: 700,
-                padding: '10px 20px',
-                borderRadius: 'var(--radius-sm)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}
+              className="btn btn-primary"
+              style={{ padding: '10px 20px', fontSize: '0.85rem' }}
             >
               {isHunting ? <RefreshCw size={16} className="spin" /> : executionMode === 'ASSISTED' ? <UserCheck size={16} /> : <Zap size={16} />}
-              {isHunting ? 'EXECUTING...' : executionMode === 'ASSISTED' ? 'START ASSISTED HUNT' : 'START AUTONOMOUS HUNT'}
+              {isHunting ? 'Running…' : executionMode === 'ASSISTED' ? 'Start assisted hunt' : 'Start hunt'}
             </button>
           </div>
         </div>
@@ -404,7 +377,7 @@ export default function HuntWorkspace({ activeHunt, onSelectScenario, activeScen
             <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.05em' }}>
               INVESTIGATION HYPOTHESIS & OBJECTIVES
             </span>
-            <span className="badge badge-info">HYPOTHESIS STATE: SUPPORTED</span>
+            <span className={`badge ${(currentHunt?.hypothesisState || 'SUPPORTED') === 'SUPPORTED' ? 'badge-info' : (currentHunt?.hypothesisState === 'REFUTED' ? 'badge-danger' : 'badge-warning')}`}>Hypothesis: {(currentHunt?.hypothesisState || 'SUPPORTED').toLowerCase()}</span>
           </div>
           <p style={{ fontSize: '0.92rem', color: '#fafafa', fontWeight: 700, lineHeight: 1.5 }}>
             "An attacker conducted security-relevant events matching request query '{currentHunt?.question || query}' targeting host infrastructure."
