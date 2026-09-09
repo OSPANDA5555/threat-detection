@@ -2,10 +2,10 @@
 
 > An AI-Assisted, Zero-Trust Threat-Hunting Workstation, Real-Time SOC Investigation Engine & Linux Telemetry Platform.
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-Vercel%20Production-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://threat-detection-seven-black.vercel.app)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Threat%20Detection-0A84FF?style=for-the-badge)](https://threat-detection-seven-black.vercel.app)
 [![Build Status](https://img.shields.io/badge/Tests-100%2F100%20Passing-brightgreen?style=for-the-badge)](https://github.com/OSPANDA5555/threat-detection)
 
-🌐 **Live Public Demo**: [https://threat-detection-seven-black.vercel.app](https://threat-detection-seven-black.vercel.app)
+🌐 **Live Demo**: [Threat Detection](https://threat-detection-seven-black.vercel.app)
 
 ---
 
