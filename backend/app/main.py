@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect, Depends, Header, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Query, Path, Request, status, WebSocket, WebSocketDisconnect, Depends, Header, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional
 import time
 import json
 import uuid
+import logging
 
 from app.config import settings
 from app.auth.models import UserRole, AuthUser, LoginRequest, TokenResponse
@@ -31,7 +32,7 @@ from app.hunting.graph import InvestigationGraphBuilder
 from app.telemetry.generator import telemetry_engine
 from app.telemetry.evaluation import EvaluationEngine
 from app.telemetry.lab import EvaluationLabRunner, EVALUATION_RUN_STORE
-from app.core.security import check_rate_limit, is_valid_ip
+from app.core.security import check_rate_limit, is_valid_ip, validate_resource_id
 from app.schemas.replay import ReplayConfig, ReplayStatus
 from app.replay.engine import replay_engine
 from app.schemas.stream import StreamStats, StreamedEvent
@@ -81,16 +82,28 @@ async def add_security_headers_and_rate_limit(request: Request, call_next):
     else:
         client_ip = request.client.host if request.client else "127.0.0.1"
 
+    request.state.client_ip = client_ip
+    request.state.request_id = f"req-{uuid.uuid4().hex[:12]}"
+
+    # Request size limit check from Content-Length header (25 MB max)
+    content_length = request.headers.get("content-length")
+    max_payload_bytes = getattr(settings, "MAX_UPLOAD_SIZE_MB", 25) * 1024 * 1024
+    if content_length and int(content_length) > max_payload_bytes:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": f"Request entity too large. Maximum allowed size is {settings.MAX_UPLOAD_SIZE_MB}MB."}
+        )
+
     # Rate Limiting Check (bounds from settings, overridable via .env)
     allowed, msg = check_rate_limit(
         client_ip,
         max_requests=settings.RATE_LIMIT_MAX_REQUESTS,
         window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS,
+        key_prefix="global"
     )
     if not allowed:
         return JSONResponse(status_code=429, content={"detail": msg})
 
-    request.state.request_id = f"req-{uuid.uuid4().hex[:12]}"
     response = await call_next(request)
     
     # Secure HTTP Headers
@@ -108,16 +121,35 @@ async def value_error_handler(request: Request, exc: ValueError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    req_id = getattr(request.state, "request_id", "req-unknown")
+    logging.getLogger("uvicorn.error").error(
+        f"Unhandled exception on {request.method} {request.url.path} [{req_id}]: {exc}",
+        exc_info=True
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error. Request ID: {req_id}"}
+    )
+
+
 # ==============================================================================
 # Authentication & Authorization Endpoints
 # ==============================================================================
 
 @app.post(f"{settings.API_V1_STR}/auth/login", response_model=TokenResponse, tags=["Authentication"])
 @app.post("/api/auth/login", response_model=TokenResponse, tags=["Authentication"])
-async def login_for_access_token(req: LoginRequest) -> TokenResponse:
+async def login_for_access_token(req: LoginRequest, request: Request) -> TokenResponse:
     """
     Authenticate analyst or administrator and issue a cryptographically signed JWT access token.
+    Enforces dedicated brute-force rate limiting (max 10 attempts/min per IP).
     """
+    client_ip = getattr(request.state, "client_ip", "127.0.0.1")
+    allowed, msg = check_rate_limit(client_ip, max_requests=10, window_seconds=60, key_prefix="auth_login")
+    if not allowed:
+        raise HTTPException(status_code=429, detail="Too many login attempts. Please wait before retrying.")
+
     user = authenticate_user(req.username, req.password)
     if not user:
         raise HTTPException(
@@ -336,7 +368,7 @@ async def list_telemetry_scenarios(current_user: AuthUser = Depends(require_anal
 
 @app.post(f"{settings.API_V1_STR}/telemetry/scenarios/select/{{scenario_id}}", tags=["Telemetry Engine"])
 async def select_telemetry_scenario(
-    scenario_id: str,
+    scenario_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ):
     """Switch current active synthetic laboratory scenario."""
@@ -386,10 +418,10 @@ async def query_telemetry_events(
     return [evt.model_dump() for evt in events]
 
 class CrossWorkstationCollectRequest(BaseModel):
-    hosts: List[str] = ["all"]
-    log_sources: List[str] = ["auth", "process", "network", "dns", "file"]
-    indicator: str = None
-    limit: int = 100
+    hosts: List[str] = Field(default=["all"], max_length=50)
+    log_sources: List[str] = Field(default=["auth", "process", "network", "dns", "file"], max_length=20)
+    indicator: Optional[str] = Field(default=None, max_length=200)
+    limit: int = Field(default=100, ge=1, le=500)
 
 @app.post(f"{settings.API_V1_STR}/telemetry/collect", tags=["Telemetry Engine"])
 async def collect_cross_workstation_telemetry(
@@ -426,10 +458,10 @@ from app.schemas.dataset import (
 )
 
 class RawDatasetImportRequest(BaseModel):
-    content: str
-    file_name: str = "raw_import.json"
-    dataset_name: Optional[str] = None
-    format_hint: Optional[str] = None
+    content: str = Field(..., min_length=1, max_length=25 * 1024 * 1024)
+    file_name: str = Field(default="raw_import.json", max_length=256)
+    dataset_name: Optional[str] = Field(default=None, max_length=256)
+    format_hint: Optional[str] = Field(default=None, max_length=64)
 
 @app.post(f"{settings.API_V1_STR}/datasets/import/file", response_model=DatasetImportReport, tags=["Dataset Ingestion"])
 async def import_dataset_file(
@@ -453,7 +485,7 @@ async def import_dataset_file(
 
     return dataset_service.import_dataset(
         content=file_bytes,
-        file_name=file.filename,
+        file_name=file.filename or "uploaded_dataset",
         dataset_name=dataset_name,
         format_hint=format_hint,
         owner_id=current_user.user_id,
@@ -532,7 +564,7 @@ async def list_imported_datasets(
 
 @app.get(f"{settings.API_V1_STR}/datasets/{{dataset_id}}", response_model=DatasetMetadata, tags=["Dataset Ingestion"])
 async def get_dataset_metadata(
-    dataset_id: str,
+    dataset_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ) -> DatasetMetadata:
     """
@@ -550,19 +582,19 @@ async def get_dataset_metadata(
 
 @app.get(f"{settings.API_V1_STR}/datasets/{{dataset_id}}/events", tags=["Dataset Ingestion"])
 async def query_dataset_events(
-    dataset_id: str,
-    label: Optional[str] = None,
-    source_ip: Optional[str] = None,
-    destination_ip: Optional[str] = None,
-    destination_port: Optional[int] = None,
-    protocol: Optional[str] = None,
+    dataset_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
+    label: Optional[str] = Query(default=None, max_length=128),
+    source_ip: Optional[str] = Query(default=None, max_length=64),
+    destination_ip: Optional[str] = Query(default=None, max_length=64),
+    destination_port: Optional[int] = Query(default=None, ge=1, le=65535),
+    protocol: Optional[str] = Query(default=None, max_length=32),
     is_malicious: Optional[bool] = None,
-    offset: int = 0,
-    limit: int = 50,
+    offset: int = Query(default=0, ge=0, le=100000),
+    limit: int = Query(default=50, ge=1, le=500),
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ):
     """
-    Query normalized events from an imported dataset with filtering and BOLA authorization check.
+    Query normalized events from an imported dataset with filtering, pagination, and BOLA authorization check.
     """
     ds = dataset_service.get_dataset(dataset_id)
     if not ds:
@@ -593,7 +625,7 @@ async def query_dataset_events(
 
 @app.delete(f"{settings.API_V1_STR}/datasets/{{dataset_id}}", tags=["Dataset Ingestion"])
 async def delete_imported_dataset(
-    dataset_id: str,
+    dataset_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
     current_user: AuthUser = Depends(require_admin)
 ):
     """
@@ -737,7 +769,7 @@ async def get_evaluation_metrics(
 @app.get("/api/incidents/{incident_id}", response_model=ActiveIncident, tags=["Incident Detection"])
 @app.get(f"{settings.API_V1_STR}/incidents/{{incident_id}}", response_model=ActiveIncident, tags=["Incident Detection"])
 async def get_incident_detail(
-    incident_id: str,
+    incident_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ) -> ActiveIncident:
     """
@@ -850,7 +882,7 @@ async def list_registered_agents(
 @app.get("/api/agents/{agent_id}", response_model=AgentStatus, tags=["Agent Ingestion"])
 @app.get(f"{settings.API_V1_STR}/agents/{{agent_id}}", response_model=AgentStatus, tags=["Agent Ingestion"])
 async def get_agent_status(
-    agent_id: str,
+    agent_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ) -> AgentStatus:
     """
@@ -890,7 +922,7 @@ async def get_scenario_replay_status(
 @app.get("/api/scenarios/{scenario_id}", response_model=PrebuiltScenario, tags=["Simulated Scenarios"])
 @app.get(f"{settings.API_V1_STR}/scenarios/{{scenario_id}}", response_model=PrebuiltScenario, tags=["Simulated Scenarios"])
 async def get_prebuilt_scenario(
-    scenario_id: str,
+    scenario_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ) -> PrebuiltScenario:
     """
@@ -904,7 +936,7 @@ async def get_prebuilt_scenario(
 @app.post("/api/scenarios/replay/{scenario_id}", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
 @app.post(f"{settings.API_V1_STR}/scenarios/replay/{{scenario_id}}", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
 async def start_scenario_replay(
-    scenario_id: str,
+    scenario_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
     speed_multiplier: float = Query(2.0, ge=0.25, le=50.0),
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ) -> SimulatedReplayStatus:
@@ -974,7 +1006,7 @@ async def list_evaluation_runs(
 
 @app.get(f"{settings.API_V1_STR}/telemetry/lab/runs/{{run_id}}", response_model=EvaluationRun, tags=["Evaluation Lab"])
 async def get_evaluation_run_detail(
-    run_id: str,
+    run_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ) -> EvaluationRun:
     """
@@ -1018,11 +1050,18 @@ class HuntApproveRequest(BaseModel):
 @app.post(f"{settings.API_V1_STR}/hunts/run", response_model=Hunt, tags=["Threat Hunting"])
 async def run_autonomous_hunt(
     request: HuntRunRequest,
+    req_http: Request,
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ) -> Hunt:
     """
     Execute a controlled threat hunt in ASSISTED or AUTONOMOUS mode.
+    Enforces hunt-specific rate limiting (max 20 hunts/min per IP).
     """
+    client_ip = getattr(req_http.state, "client_ip", "127.0.0.1")
+    allowed, msg = check_rate_limit(client_ip, max_requests=20, window_seconds=60, key_prefix="hunt_run")
+    if not allowed:
+        raise HTTPException(status_code=429, detail="Too many hunt execution requests. Please wait before starting another hunt.")
+
     engine = AutonomousHuntingEngine()
     try:
         return await engine.execute_hunt(
@@ -1036,8 +1075,8 @@ async def run_autonomous_hunt(
 
 @app.post(f"{settings.API_V1_STR}/hunts/{{hunt_id}}/approve", response_model=Hunt, tags=["Threat Hunting"])
 async def approve_assisted_tool_call(
-    hunt_id: str,
-    request: HuntApproveRequest,
+    hunt_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
+    request: HuntApproveRequest = None,
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ) -> Hunt:
     """
@@ -1057,7 +1096,7 @@ async def approve_assisted_tool_call(
 
 @app.get(f"{settings.API_V1_STR}/hunts/{{hunt_id}}/audit", tags=["Threat Hunting"])
 async def get_hunt_audit_log(
-    hunt_id: str,
+    hunt_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ):
     """
@@ -1076,7 +1115,7 @@ async def get_hunt_audit_log(
 
 @app.get(f"{settings.API_V1_STR}/hunts/{{hunt_id}}/graph", tags=["Threat Hunting"])
 async def get_hunt_investigation_graph(
-    hunt_id: str,
+    hunt_id: str = Path(..., pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", max_length=64),
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ):
     """

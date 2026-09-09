@@ -41,24 +41,38 @@ def is_valid_ip(ip_str: str) -> bool:
 RATE_LIMIT_STORE: Dict[str, list] = {}
 _RATE_LIMIT_LOCK = threading.Lock()
 
-def check_rate_limit(client_ip: str, max_requests: int = 120, window_seconds: int = 60) -> Tuple[bool, str]:
+RESOURCE_ID_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.:]{1,64}$")
+
+def validate_resource_id(resource_id: str) -> bool:
+    """Validate resource identifier against path traversal and malformed inputs."""
+    if not resource_id or not isinstance(resource_id, str):
+        return False
+    return bool(RESOURCE_ID_REGEX.match(resource_id))
+
+def check_rate_limit(
+    client_ip: str,
+    max_requests: int = 120,
+    window_seconds: int = 60,
+    key_prefix: str = "global"
+) -> Tuple[bool, str]:
     """
-    Sliding window rate limiting check for API endpoints.
+    Sliding window rate limiting check for API endpoints with optional prefix (e.g. 'auth', 'hunt').
     Thread-safe, prunes stale entries, and bounds total tracked keys.
     """
     now = time.time()
     cutoff = now - window_seconds
+    store_key = f"{key_prefix}:{client_ip}"
     with _RATE_LIMIT_LOCK:
-        timestamps = RATE_LIMIT_STORE.get(client_ip, [])
+        timestamps = RATE_LIMIT_STORE.get(store_key, [])
         # Filter timestamps within active window
         valid_timestamps = [ts for ts in timestamps if ts > cutoff]
 
         if len(valid_timestamps) >= max_requests:
-            RATE_LIMIT_STORE[client_ip] = valid_timestamps
-            return False, "Rate limit exceeded. Please wait before retrying."
+            RATE_LIMIT_STORE[store_key] = valid_timestamps
+            return False, f"Rate limit exceeded for {key_prefix}. Please wait before retrying."
 
         valid_timestamps.append(now)
-        RATE_LIMIT_STORE[client_ip] = valid_timestamps
+        RATE_LIMIT_STORE[store_key] = valid_timestamps
 
         # Opportunistic cleanup: drop fully-expired keys and enforce key cap.
         if len(RATE_LIMIT_STORE) > MAX_RATE_LIMIT_KEYS:
@@ -73,10 +87,18 @@ def check_rate_limit(client_ip: str, max_requests: int = 120, window_seconds: in
         return True, "OK"
 
 
-def reset_rate_limit(client_ip: Optional[str] = None) -> None:
+def reset_rate_limit(client_ip: Optional[str] = None, key_prefix: Optional[str] = None) -> None:
     """Clear limiter state — primarily for tests."""
     with _RATE_LIMIT_LOCK:
-        if client_ip is None:
+        if client_ip is None and key_prefix is None:
             RATE_LIMIT_STORE.clear()
         else:
-            RATE_LIMIT_STORE.pop(client_ip, None)
+            for k in list(RATE_LIMIT_STORE.keys()):
+                match = True
+                if client_ip is not None and not (k == client_ip or k.endswith(f":{client_ip}")):
+                    match = False
+                if key_prefix is not None and not k.startswith(f"{key_prefix}:"):
+                    match = False
+                if match:
+                    RATE_LIMIT_STORE.pop(k, None)
+

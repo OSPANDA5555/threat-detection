@@ -5,8 +5,19 @@ from app.main import app
 from app.config import settings
 from app.auth.models import UserRole
 from app.auth.security import create_access_token
+from app.core.security import reset_rate_limit
 
 client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter_state():
+    reset_rate_limit("127.0.0.1", key_prefix="auth_login")
+    reset_rate_limit("testclient", key_prefix="auth_login")
+    reset_rate_limit("127.0.0.1", key_prefix="hunt_run")
+    reset_rate_limit("testclient", key_prefix="hunt_run")
+    reset_rate_limit("127.0.0.1", key_prefix="global")
+    reset_rate_limit("testclient", key_prefix="global")
+    yield
 
 def get_auth_token(role: UserRole = UserRole.ANALYST, user_id: str = "analyst", tenant_id: str = "soc-org-primary", expires_in_minutes: int = 60) -> str:
     """Helper to generate signed test JWT tokens."""

@@ -82,11 +82,11 @@ class DatasetImportReport(BaseModel):
     message: str = "Dataset imported and normalized successfully."
 
 class DatasetQueryFilter(BaseModel):
-    label: Optional[str] = None
-    source_ip: Optional[str] = None
-    destination_ip: Optional[str] = None
-    destination_port: Optional[int] = None
-    protocol: Optional[str] = None
+    label: Optional[str] = Field(default=None, max_length=128)
+    source_ip: Optional[str] = Field(default=None, max_length=64)
+    destination_ip: Optional[str] = Field(default=None, max_length=64)
+    destination_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    protocol: Optional[str] = Field(default=None, max_length=32)
     is_malicious: Optional[bool] = None
-    offset: int = 0
+    offset: int = Field(default=0, ge=0, le=100000)
     limit: int = Field(default=50, ge=1, le=500)
