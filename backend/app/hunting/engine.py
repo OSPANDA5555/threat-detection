@@ -100,7 +100,9 @@ class AutonomousHuntingEngine:
         self,
         question: str,
         mode: ExecutionMode = ExecutionMode.AUTONOMOUS,
-        existing_hunt: Optional[Hunt] = None
+        existing_hunt: Optional[Hunt] = None,
+        owner_id: Optional[str] = None,
+        tenant_id: Optional[str] = None
     ) -> Hunt:
         """
         Execute an autonomous threat hunt workflow with strict safety limits and dual modes.
@@ -119,7 +121,9 @@ class AutonomousHuntingEngine:
                 mode=mode,
                 status=HuntStatus.PLANNING,
                 currentIteration=1,
-                maxIterations=5
+                maxIterations=5,
+                owner_id=owner_id or "system-demo",
+                tenant_id=tenant_id or "soc-org-primary"
             )
 
         with _HUNT_STORE_LOCK:

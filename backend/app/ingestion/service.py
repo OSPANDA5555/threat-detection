@@ -32,11 +32,18 @@ class DatasetIngestionService:
         content: bytes,
         file_name: str,
         dataset_name: Optional[str] = None,
-        format_hint: Optional[str] = None
+        format_hint: Optional[str] = None,
+        owner_id: Optional[str] = "system-demo",
+        tenant_id: Optional[str] = "soc-org-primary"
     ) -> DatasetImportReport:
         """
         Ingests a dataset from bytes, normalizes it, and saves metadata.
         """
+        # Hard upload size limit guard (default 25MB)
+        max_bytes = 25 * 1024 * 1024
+        if len(content) > max_bytes:
+            raise ValueError(f"Payload size ({round(len(content)/(1024*1024), 1)} MB) exceeds maximum upload cap of 25 MB.")
+
         if not dataset_name:
             dataset_name = os.path.splitext(file_name)[0].replace("_", " ").title()
 
@@ -51,6 +58,11 @@ class DatasetIngestionService:
         else:
             # Fallback to CSV
             metadata, events = self._cic_normalizer.parse_and_normalize(content, file_name, dataset_name)
+
+        if owner_id:
+            metadata.owner_id = owner_id
+        if tenant_id:
+            metadata.tenant_id = tenant_id
 
         # Save to store
         self._datasets[metadata.dataset_id] = metadata

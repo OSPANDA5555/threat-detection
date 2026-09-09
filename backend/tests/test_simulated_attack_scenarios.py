@@ -61,15 +61,18 @@ def test_multi_stage_attack_kill_chain_coverage():
 
 def test_scenarios_rest_api_endpoints():
     client = TestClient(app)
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    analyst_headers = {"Authorization": f"Bearer {create_access_token('usr-analyst-01', 'analyst', UserRole.ANALYST)}"}
 
     # 1. List scenarios
-    resp = client.get("/api/scenarios")
+    resp = client.get("/api/scenarios", headers=analyst_headers)
     assert resp.status_code == 200
     sc_list = resp.json()
     assert len(sc_list) == 7
 
     # 2. Get specific scenario
-    resp_detail = client.get("/api/scenarios/multi-stage-attack")
+    resp_detail = client.get("/api/scenarios/multi-stage-attack", headers=analyst_headers)
     assert resp_detail.status_code == 200
     detail = resp_detail.json()
     assert detail["name"] == "Multi-Stage Attack (Full Kill-Chain)"
@@ -77,26 +80,29 @@ def test_scenarios_rest_api_endpoints():
     assert len(detail["events"]) >= 6
 
     # 3. Invalid scenario returns 404
-    resp_404 = client.get("/api/scenarios/nonexistent-scenario")
+    resp_404 = client.get("/api/scenarios/nonexistent-scenario", headers=analyst_headers)
     assert resp_404.status_code == 404
 
 def test_scenario_replay_lifecycle_and_status():
     client = TestClient(app)
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    analyst_headers = {"Authorization": f"Bearer {create_access_token('usr-analyst-01', 'analyst', UserRole.ANALYST)}"}
 
     # 1. Status initially idle
-    resp_status = client.get("/api/scenarios/status")
+    resp_status = client.get("/api/scenarios/status", headers=analyst_headers)
     assert resp_status.status_code == 200
     assert resp_status.json()["category"] == "SIMULATED ATTACK REPLAY"
 
     # 2. Start replay at 50x speed for fast test execution
-    resp_start = client.post("/api/scenarios/replay/ssh-bruteforce?speed_multiplier=50.0")
+    resp_start = client.post("/api/scenarios/replay/ssh-bruteforce?speed_multiplier=50.0", headers=analyst_headers)
     assert resp_start.status_code == 200
     start_data = resp_start.json()
     assert start_data["status"] == "running"
     assert start_data["scenario_id"] == "ssh-bruteforce"
 
     # 3. Stop replay
-    resp_stop = client.post("/api/scenarios/stop")
+    resp_stop = client.post("/api/scenarios/stop", headers=analyst_headers)
     assert resp_stop.status_code == 200
     assert resp_stop.json()["status"] in ["stopped", "completed"]
 

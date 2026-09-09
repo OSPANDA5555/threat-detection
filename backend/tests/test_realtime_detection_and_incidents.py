@@ -279,13 +279,17 @@ def test_online_evaluation_metrics_and_significance_barrier():
 
 def test_realtime_detection_rest_endpoints():
     client = TestClient(app)
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    admin_headers = {"Authorization": f"Bearer {create_access_token('admin', 'admin', UserRole.ADMIN)}"}
+    analyst_headers = {"Authorization": f"Bearer {create_access_token('usr-analyst-01', 'analyst', UserRole.ANALYST)}"}
 
     # 1. Reset
-    resp = client.post("/api/incidents/reset")
+    resp = client.post("/api/incidents/reset", headers=admin_headers)
     assert resp.status_code == 200
 
     # 2. Check active incidents (empty initially)
-    resp = client.get("/api/incidents/active")
+    resp = client.get("/api/incidents/active", headers=analyst_headers)
     assert resp.status_code == 200
     assert resp.json() == []
 
@@ -301,21 +305,21 @@ def test_realtime_detection_rest_endpoints():
     })
 
     # 4. Check active incidents
-    resp = client.get("/api/incidents/active")
+    resp = client.get("/api/incidents/active", headers=analyst_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 1
     inc_id = data[0]["incident_id"]
 
     # 5. Get incident detail
-    resp = client.get(f"/api/incidents/{inc_id}")
+    resp = client.get(f"/api/incidents/{inc_id}", headers=analyst_headers)
     assert resp.status_code == 200
     inc_data = resp.json()
     assert inc_data["incident_id"] == inc_id
     assert len(inc_data["detections"]) == 1
 
     # 6. Evaluation metrics
-    resp = client.get("/api/incidents/evaluation")
+    resp = client.get("/api/incidents/evaluation", headers=analyst_headers)
     assert resp.status_code == 200
     eval_data = resp.json()
     assert eval_data["total_labeled_events"] == 1

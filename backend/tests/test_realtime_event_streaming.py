@@ -151,7 +151,10 @@ def test_replay_engine_broadcasts_to_streaming_hub():
 
 def test_event_streaming_stats_endpoint():
     """Verify /api/events/stats returns live metrics."""
-    res = client.get("/api/events/stats")
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    headers = {"Authorization": f"Bearer {create_access_token('usr-analyst-01', 'analyst', UserRole.ANALYST)}"}
+    res = client.get("/api/events/stats", headers=headers)
     assert res.status_code == 200
     stats = res.json()
     assert "connected_clients" in stats

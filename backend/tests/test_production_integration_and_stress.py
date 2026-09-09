@@ -77,6 +77,9 @@ def test_concurrent_agent_shippers_race_condition():
     """
     client = TestClient(app)
 
+    from app.config import settings
+    agent_headers = {"X-API-Key": settings.SOC_AGENT_API_KEY}
+
     def ship_batch(agent_num: int):
         return client.post("/api/events", json={
             "agent_id": f"agent-stress-{agent_num}",
@@ -96,7 +99,7 @@ def test_concurrent_agent_shippers_race_condition():
                 }
                 for j in range(10)
             ]
-        })
+        }, headers=agent_headers)
 
     # Fire 10 concurrent requests
     responses = [ship_batch(i) for i in range(10)]

@@ -172,12 +172,17 @@ def test_replay_determinism():
 
 def test_replay_api_lifecycle():
     """Test start, pause, resume, stop, and status via FastAPI endpoints."""
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    token = create_access_token("usr-analyst-01", "analyst", UserRole.ANALYST)
+    headers = {"Authorization": f"Bearer {token}"}
+
     async def _test():
         datasets = dataset_service.list_datasets()
         ds_id = datasets[0].dataset_id
 
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test", headers=headers) as ac:
             # 1. Start Replay at 1.0x
             res_start = await ac.post("/api/replay/start", json={
                 "datasetId": ds_id,
@@ -215,9 +220,14 @@ def test_replay_api_lifecycle():
 
 
 def test_replay_invalid_dataset_returns_400():
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    token = create_access_token("usr-analyst-01", "analyst", UserRole.ANALYST)
+    headers = {"Authorization": f"Bearer {token}"}
+
     res = client.post("/api/replay/start", json={
         "datasetId": "non-existent-dataset-id",
         "speedMultiplier": 1.0
-    })
+    }, headers=headers)
     assert res.status_code == 400
     assert "not found" in res.json()["detail"]

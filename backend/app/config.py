@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     # 8-hunt suite on every GET.
     ADVERSARIAL_CACHE_TTL_SECONDS: int = Field(default=300, ge=0, le=3600)
 
+    # Authentication & Security Settings
+    JWT_SECRET_KEY: str = Field(default="threat-hunting-copilot-dev-jwt-secret-2026")
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=1440, ge=5, le=43200)
+    SOC_AGENT_API_KEY: str = Field(default="SOC_AGENT_SECRET_KEY")
+    MAX_UPLOAD_SIZE_MB: int = Field(default=25, ge=1, le=200)
+    DEMO_MODE: bool = False
+
     # Optional external LLM provider (default: deterministic embedded engine)
     LLM_PROVIDER: str = "embedded"
 

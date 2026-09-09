@@ -162,7 +162,13 @@ def test_post_events_api_ingestion_and_heartbeat():
         ]
     }
 
-    resp = client.post("/api/events", json=batch_payload)
+    from app.config import settings
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    agent_headers = {"X-API-Key": settings.SOC_AGENT_API_KEY}
+    analyst_headers = {"Authorization": f"Bearer {create_access_token('usr-analyst-01', 'analyst', UserRole.ANALYST)}"}
+
+    resp = client.post("/api/events", json=batch_payload, headers=agent_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "success"
@@ -171,7 +177,7 @@ def test_post_events_api_ingestion_and_heartbeat():
     assert data["latest_sequence"] == 1
 
     # Verify agent appears in GET /api/agents
-    resp_agents = client.get("/api/agents")
+    resp_agents = client.get("/api/agents", headers=analyst_headers)
     assert resp_agents.status_code == 200
     agents_list = resp_agents.json()
     assert len(agents_list) == 1
@@ -180,7 +186,7 @@ def test_post_events_api_ingestion_and_heartbeat():
     assert agents_list[0]["total_events_sent"] == 2
 
     # Verify specific agent status endpoint
-    resp_detail = client.get("/api/agents/agent-linux-vm-01")
+    resp_detail = client.get("/api/agents/agent-linux-vm-01", headers=analyst_headers)
     assert resp_detail.status_code == 200
     assert resp_detail.json()["hostname"] == "test-vm-ubuntu"
 
@@ -190,6 +196,11 @@ def test_end_to_end_agent_telemetry_triggers_behavioral_detections():
     engine and trigger behavioral alerts and active incidents.
     """
     client = TestClient(app)
+    from app.config import settings
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    agent_headers = {"X-API-Key": settings.SOC_AGENT_API_KEY}
+    analyst_headers = {"Authorization": f"Bearer {create_access_token('usr-analyst-01', 'analyst', UserRole.ANALYST)}"}
 
     # Ingest 3 failed SSH auth events from same attacker IP
     for i in range(1, 4):
@@ -212,7 +223,7 @@ def test_end_to_end_agent_telemetry_triggers_behavioral_detections():
                     "status": "FAILURE"
                 }
             ]
-        })
+        }, headers=agent_headers)
 
     # Ingest successful login following brute force
     client.post("/api/events", json={
@@ -234,10 +245,10 @@ def test_end_to_end_agent_telemetry_triggers_behavioral_detections():
                 "status": "SUCCESS"
             }
         ]
-    })
+    }, headers=agent_headers)
 
     # Check that an active incident was created
-    resp_inc = client.get("/api/incidents/active")
+    resp_inc = client.get("/api/incidents/active", headers=analyst_headers)
     assert resp_inc.status_code == 200
     incidents = resp_inc.json()
     assert len(incidents) == 1

@@ -78,6 +78,8 @@ class AuditTrailEntry(BaseModel):
 
 class Hunt(BaseModel):
     id: str = Field(default_factory=lambda: f"hunt-{uuid.uuid4().hex[:10]}")
+    owner_id: Optional[str] = Field(default="system-demo", description="Owner user ID for BOLA isolation")
+    tenant_id: Optional[str] = Field(default="soc-org-primary", description="Tenant/Org ID for BOLA isolation")
     question: str = Field(description="Original analyst threat-hunting question")
     hypothesis: Optional[str] = Field(default=None, description="Formulated hunting hypothesis")
     hypothesisState: HypothesisState = Field(default=HypothesisState.INCONCLUSIVE)

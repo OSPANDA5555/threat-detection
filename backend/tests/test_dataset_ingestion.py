@@ -196,8 +196,13 @@ def test_pcap_adapter_ingestion():
     assert events[0].protocol == "TCP"
 
 def test_dataset_rest_api_endpoints():
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    admin_token = create_access_token("admin", "admin", UserRole.ADMIN)
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
     # 1. Load sample dataset
-    res_load = client.post("/api/v1/datasets/sample/load")
+    res_load = client.post("/api/v1/datasets/sample/load", headers=headers)
     assert res_load.status_code == 200
     report = res_load.json()
     assert report["status"] == "SUCCESS"
@@ -205,19 +210,19 @@ def test_dataset_rest_api_endpoints():
     assert report["dataset"]["total_events"] > 0
 
     # 2. List datasets
-    res_list = client.get("/api/v1/datasets")
+    res_list = client.get("/api/v1/datasets", headers=headers)
     assert res_list.status_code == 200
     datasets = res_list.json()
     assert len(datasets) > 0
     assert any(ds["dataset_id"] == dataset_id for ds in datasets)
 
     # 3. Get specific dataset metadata
-    res_get = client.get(f"/api/v1/datasets/{dataset_id}")
+    res_get = client.get(f"/api/v1/datasets/{dataset_id}", headers=headers)
     assert res_get.status_code == 200
     assert res_get.json()["dataset_id"] == dataset_id
 
     # 4. Query dataset events with filter
-    res_events = client.get(f"/api/v1/datasets/{dataset_id}/events?limit=5")
+    res_events = client.get(f"/api/v1/datasets/{dataset_id}/events?limit=5", headers=headers)
     assert res_events.status_code == 200
     events_data = res_events.json()
     assert len(events_data["events"]) <= 5
@@ -229,10 +234,10 @@ def test_dataset_rest_api_endpoints():
         "file_name": "api_test.csv",
         "dataset_name": "API Test Raw"
     }
-    res_raw = client.post("/api/v1/datasets/import/raw", json=raw_payload)
+    res_raw = client.post("/api/v1/datasets/import/raw", json=raw_payload, headers=headers)
     assert res_raw.status_code == 200
     raw_ds_id = res_raw.json()["dataset"]["dataset_id"]
 
     # 6. Delete dataset
-    res_del = client.delete(f"/api/v1/datasets/{raw_ds_id}")
+    res_del = client.delete(f"/api/v1/datasets/{raw_ds_id}", headers=headers)
     assert res_del.status_code == 200

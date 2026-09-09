@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect, Depends, Header, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -7,8 +7,18 @@ import time
 import json
 import uuid
 
-
 from app.config import settings
+from app.auth.models import UserRole, AuthUser, LoginRequest, TokenResponse
+from app.auth.security import (
+    get_current_user,
+    require_role,
+    require_admin,
+    require_analyst_or_admin,
+    require_agent_or_admin,
+    authenticate_user,
+    create_access_token,
+    verify_token
+)
 from app.tools.gateway import ToolGateway
 from app.schemas.tool import ToolDefinition, ToolExecutionRequest, ToolExecutionResult
 from app.schemas.hunt import Hunt, HuntPlanStep, HuntStatus, HypothesisState, ExecutionMode
@@ -21,7 +31,7 @@ from app.hunting.graph import InvestigationGraphBuilder
 from app.telemetry.generator import telemetry_engine
 from app.telemetry.evaluation import EvaluationEngine
 from app.telemetry.lab import EvaluationLabRunner, EVALUATION_RUN_STORE
-from app.core.security import check_rate_limit
+from app.core.security import check_rate_limit, is_valid_ip
 from app.schemas.replay import ReplayConfig, ReplayStatus
 from app.replay.engine import replay_engine
 from app.schemas.stream import StreamStats, StreamedEvent
@@ -36,11 +46,6 @@ from app.scenarios.engine import simulated_scenario_runner, SimulatedReplayStatu
 from app.schemas.health import ComprehensiveHealthReport, SubsystemHealth
 from app.ingestion.service import dataset_service
 
-
-
-
-
-
 # Initialize FastAPI application
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -49,10 +54,6 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     docs_url="/docs"
 )
-
-from fastapi import Request
-from fastapi.responses import JSONResponse
-from app.core.security import check_rate_limit
 
 # CORS: never combine a wildcard origin with credentials (browsers reject it
 # and it weakens the security posture). Fall back to explicit origins.
@@ -66,14 +67,21 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=_cors_allow_credentials,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 @app.middleware("http")
 async def add_security_headers_and_rate_limit(request: Request, call_next):
+    # Proxy-aware client IP extraction (X-Forwarded-For)
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        candidate_ip = forwarded.split(",")[0].strip()
+        client_ip = candidate_ip if is_valid_ip(candidate_ip) else (request.client.host if request.client else "127.0.0.1")
+    else:
+        client_ip = request.client.host if request.client else "127.0.0.1"
+
     # Rate Limiting Check (bounds from settings, overridable via .env)
-    client_ip = request.client.host if request.client else "127.0.0.1"
     allowed, msg = check_rate_limit(
         client_ip,
         max_requests=settings.RATE_LIMIT_MAX_REQUESTS,
@@ -98,6 +106,47 @@ async def add_security_headers_and_rate_limit(request: Request, call_next):
 @app.exception_handler(ValueError)
 async def value_error_handler(request: Request, exc: ValueError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+# ==============================================================================
+# Authentication & Authorization Endpoints
+# ==============================================================================
+
+@app.post(f"{settings.API_V1_STR}/auth/login", response_model=TokenResponse, tags=["Authentication"])
+@app.post("/api/auth/login", response_model=TokenResponse, tags=["Authentication"])
+async def login_for_access_token(req: LoginRequest) -> TokenResponse:
+    """
+    Authenticate analyst or administrator and issue a cryptographically signed JWT access token.
+    """
+    user = authenticate_user(req.username, req.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    token = create_access_token(
+        user_id=user.user_id,
+        username=user.username,
+        role=user.role,
+        tenant_id=user.tenant_id,
+        expires_in_minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        user=user
+    )
+
+
+@app.get(f"{settings.API_V1_STR}/auth/me", response_model=AuthUser, tags=["Authentication"])
+@app.get("/api/auth/me", response_model=AuthUser, tags=["Authentication"])
+async def get_my_profile(current_user: AuthUser = Depends(get_current_user)) -> AuthUser:
+    """
+    Return currently authenticated caller profile, assigned role, and tenant ID.
+    """
+    return current_user
 
 
 # In-memory cache for the expensive adversarial suite (re-running 8 full
@@ -265,12 +314,15 @@ async def get_comprehensive_health_report() -> ComprehensiveHealthReport:
 
 
 @app.get(f"{settings.API_V1_STR}/tools", response_model=List[ToolDefinition], tags=["Tool Gateway"])
-async def list_tools() -> List[ToolDefinition]:
+async def list_tools(current_user: AuthUser = Depends(require_analyst_or_admin)) -> List[ToolDefinition]:
     """List all approved read-only tools registered in the Tool Gateway."""
     return gateway.get_registered_tools()
 
 @app.post(f"{settings.API_V1_STR}/tools/execute", response_model=ToolExecutionResult, tags=["Tool Gateway"])
-async def execute_tool_endpoint(request: ToolExecutionRequest) -> ToolExecutionResult:
+async def execute_tool_endpoint(
+    request: ToolExecutionRequest,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> ToolExecutionResult:
     """
     Execute a query through the controlled Tool Gateway.
     Strictly validates tool registration, arguments, read-only status, and caps.
@@ -278,12 +330,15 @@ async def execute_tool_endpoint(request: ToolExecutionRequest) -> ToolExecutionR
     return await gateway.execute_tool(request)
 
 @app.get(f"{settings.API_V1_STR}/telemetry/scenarios", tags=["Telemetry Engine"])
-async def list_telemetry_scenarios():
+async def list_telemetry_scenarios(current_user: AuthUser = Depends(require_analyst_or_admin)):
     """List all available synthetic security laboratory attack scenarios."""
     return telemetry_engine.get_scenarios()
 
 @app.post(f"{settings.API_V1_STR}/telemetry/scenarios/select/{{scenario_id}}", tags=["Telemetry Engine"])
-async def select_telemetry_scenario(scenario_id: str):
+async def select_telemetry_scenario(
+    scenario_id: str,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+):
     """Switch current active synthetic laboratory scenario."""
     success = telemetry_engine.set_active_scenario(scenario_id)
     if not success:
@@ -300,6 +355,7 @@ async def query_telemetry_events(
     action: Optional[str] = Query(default=None, max_length=100),
     status: Optional[str] = Query(default=None, max_length=20),
     limit: int = Query(default=100, ge=1, le=500),
+    current_user: AuthUser = Depends(require_analyst_or_admin)
 ):
     """
     Telemetry Explorer API: Query raw synthetic enterprise telemetry events with filtering.
@@ -336,7 +392,10 @@ class CrossWorkstationCollectRequest(BaseModel):
     limit: int = 100
 
 @app.post(f"{settings.API_V1_STR}/telemetry/collect", tags=["Telemetry Engine"])
-async def collect_cross_workstation_telemetry(req: CrossWorkstationCollectRequest):
+async def collect_cross_workstation_telemetry(
+    req: CrossWorkstationCollectRequest,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+):
     """
     Collect, aggregate, and correlate security logs across specified workstations and endpoints.
     """
@@ -349,7 +408,7 @@ async def collect_cross_workstation_telemetry(req: CrossWorkstationCollectReques
     )
 
 @app.get(f"{settings.API_V1_STR}/telemetry/workstations", tags=["Telemetry Engine"])
-async def get_workstation_inventory():
+async def get_workstation_inventory(current_user: AuthUser = Depends(require_analyst_or_admin)):
     """
     Retrieve inventory of enterprise endpoints and workstations with telemetry status.
     """
@@ -359,19 +418,16 @@ async def get_workstation_inventory():
 # ==========================================
 # DATASET INGESTION & NORMALIZATION ROUTES
 # ==========================================
-from fastapi import UploadFile, File, Form
-from typing import Optional
 from app.schemas.dataset import (
     NormalizedEvent,
     DatasetMetadata,
     DatasetImportReport,
     DatasetQueryFilter
 )
-from app.ingestion.service import dataset_service
 
 class RawDatasetImportRequest(BaseModel):
     content: str
-    file_name: str
+    file_name: str = "raw_import.json"
     dataset_name: Optional[str] = None
     format_hint: Optional[str] = None
 
@@ -379,33 +435,61 @@ class RawDatasetImportRequest(BaseModel):
 async def import_dataset_file(
     file: UploadFile = File(...),
     dataset_name: Optional[str] = Form(None),
-    format_hint: Optional[str] = Form(None)
+    format_hint: Optional[str] = Form(None),
+    current_user: AuthUser = Depends(require_analyst_or_admin)
 ) -> DatasetImportReport:
     """
     Import and normalize cybersecurity datasets (CIC-IDS2017 CSV, NetFlow, JSON events, or PCAP).
+    Protected: Analyst or Admin role required.
     """
+    # Max upload limit check (25 MB)
+    max_upload_bytes = getattr(settings, "MAX_UPLOAD_SIZE_MB", 25) * 1024 * 1024
     file_bytes = await file.read()
+    if len(file_bytes) > max_upload_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File size exceeds maximum upload limit of {settings.MAX_UPLOAD_SIZE_MB} MB."
+        )
+
     return dataset_service.import_dataset(
         content=file_bytes,
         file_name=file.filename,
         dataset_name=dataset_name,
-        format_hint=format_hint
+        format_hint=format_hint,
+        owner_id=current_user.user_id,
+        tenant_id=current_user.tenant_id
     )
 
 @app.post(f"{settings.API_V1_STR}/datasets/import/raw", response_model=DatasetImportReport, tags=["Dataset Ingestion"])
-async def import_raw_dataset(req: RawDatasetImportRequest) -> DatasetImportReport:
+async def import_raw_dataset(
+    req: RawDatasetImportRequest,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> DatasetImportReport:
     """
     Import and normalize dataset from raw text / payload string.
+    Protected: Analyst or Admin role required.
     """
+    content_bytes = req.content.encode("utf-8")
+    max_upload_bytes = getattr(settings, "MAX_UPLOAD_SIZE_MB", 25) * 1024 * 1024
+    if len(content_bytes) > max_upload_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Payload size exceeds maximum upload limit of {settings.MAX_UPLOAD_SIZE_MB} MB."
+        )
+
     return dataset_service.import_dataset(
-        content=req.content.encode("utf-8"),
+        content=content_bytes,
         file_name=req.file_name,
         dataset_name=req.dataset_name,
-        format_hint=req.format_hint
+        format_hint=req.format_hint,
+        owner_id=current_user.user_id,
+        tenant_id=current_user.tenant_id
     )
 
 @app.post(f"{settings.API_V1_STR}/datasets/sample/load", response_model=DatasetImportReport, tags=["Dataset Ingestion"])
-async def load_bundled_sample_dataset() -> DatasetImportReport:
+async def load_bundled_sample_dataset(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> DatasetImportReport:
     """
     Load bundled benchmark CIC-IDS2017 sample dataset into the platform.
     """
@@ -417,10 +501,11 @@ async def load_bundled_sample_dataset() -> DatasetImportReport:
         return dataset_service.import_dataset(
             content=content,
             file_name="cic_ids2017_sample.csv",
-            dataset_name="CIC-IDS2017 Benchmark Flow Sample"
+            dataset_name="CIC-IDS2017 Benchmark Flow Sample",
+            owner_id=current_user.user_id,
+            tenant_id=current_user.tenant_id
         )
     else:
-        # Fallback inline
         dataset_service._preload_samples()
         ds = dataset_service.list_datasets()
         return DatasetImportReport(
@@ -430,20 +515,37 @@ async def load_bundled_sample_dataset() -> DatasetImportReport:
         )
 
 @app.get(f"{settings.API_V1_STR}/datasets", response_model=List[DatasetMetadata], tags=["Dataset Ingestion"])
-async def list_imported_datasets() -> List[DatasetMetadata]:
+async def list_imported_datasets(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> List[DatasetMetadata]:
     """
-    List all imported datasets and their normalization metadata.
+    List all imported datasets. Accessible by authenticated analysts and admins.
     """
-    return dataset_service.list_datasets()
+    datasets = dataset_service.list_datasets()
+    if current_user.role == UserRole.ADMIN:
+        return datasets
+    # Filter by user ownership, tenant, or public system demo
+    return [
+        d for d in datasets
+        if d.owner_id in [current_user.user_id, "system-demo"] or d.tenant_id == current_user.tenant_id
+    ]
 
 @app.get(f"{settings.API_V1_STR}/datasets/{{dataset_id}}", response_model=DatasetMetadata, tags=["Dataset Ingestion"])
-async def get_dataset_metadata(dataset_id: str) -> DatasetMetadata:
+async def get_dataset_metadata(
+    dataset_id: str,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> DatasetMetadata:
     """
-    Get metadata, statistics, and validation errors for a specific dataset.
+    Get metadata, statistics, and validation errors for a specific dataset with BOLA authorization check.
     """
     ds = dataset_service.get_dataset(dataset_id)
     if not ds:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
+    
+    # BOLA ownership verification
+    if current_user.role != UserRole.ADMIN and ds.owner_id not in [current_user.user_id, "system-demo"] and ds.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not have permission to view this dataset.")
+
     return ds
 
 @app.get(f"{settings.API_V1_STR}/datasets/{{dataset_id}}/events", tags=["Dataset Ingestion"])
@@ -456,15 +558,19 @@ async def query_dataset_events(
     protocol: Optional[str] = None,
     is_malicious: Optional[bool] = None,
     offset: int = 0,
-    limit: int = 50
+    limit: int = 50,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
 ):
     """
-    Query normalized events from an imported dataset with filtering and pagination.
+    Query normalized events from an imported dataset with filtering and BOLA authorization check.
     """
     ds = dataset_service.get_dataset(dataset_id)
     if not ds:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
     
+    if current_user.role != UserRole.ADMIN and ds.owner_id not in [current_user.user_id, "system-demo"] and ds.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not have permission to query this dataset.")
+
     flt = DatasetQueryFilter(
         label=label,
         source_ip=source_ip,
@@ -486,9 +592,12 @@ async def query_dataset_events(
     }
 
 @app.delete(f"{settings.API_V1_STR}/datasets/{{dataset_id}}", tags=["Dataset Ingestion"])
-async def delete_imported_dataset(dataset_id: str):
+async def delete_imported_dataset(
+    dataset_id: str,
+    current_user: AuthUser = Depends(require_admin)
+):
     """
-    Delete an imported dataset and its normalized records.
+    Delete an imported dataset. Strictly protected: Admin role required.
     """
     deleted = dataset_service.delete_dataset(dataset_id)
     if not deleted:
@@ -501,7 +610,10 @@ async def delete_imported_dataset(dataset_id: str):
 
 @app.post("/api/replay/start", response_model=ReplayStatus, tags=["Replay Engine"])
 @app.post(f"{settings.API_V1_STR}/replay/start", response_model=ReplayStatus, tags=["Replay Engine"])
-async def start_event_replay(config: ReplayConfig) -> ReplayStatus:
+async def start_event_replay(
+    config: ReplayConfig,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> ReplayStatus:
     """
     Start chronological event replay from an imported dataset at specified speedMultiplier.
     Preserves original event timestamps without modification.
@@ -513,7 +625,9 @@ async def start_event_replay(config: ReplayConfig) -> ReplayStatus:
 
 @app.post("/api/replay/pause", response_model=ReplayStatus, tags=["Replay Engine"])
 @app.post(f"{settings.API_V1_STR}/replay/pause", response_model=ReplayStatus, tags=["Replay Engine"])
-async def pause_event_replay() -> ReplayStatus:
+async def pause_event_replay(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> ReplayStatus:
     """
     Pause actively running security-event replay.
     """
@@ -521,7 +635,9 @@ async def pause_event_replay() -> ReplayStatus:
 
 @app.post("/api/replay/resume", response_model=ReplayStatus, tags=["Replay Engine"])
 @app.post(f"{settings.API_V1_STR}/replay/resume", response_model=ReplayStatus, tags=["Replay Engine"])
-async def resume_event_replay() -> ReplayStatus:
+async def resume_event_replay(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> ReplayStatus:
     """
     Resume paused security-event replay from exact paused point.
     """
@@ -529,7 +645,9 @@ async def resume_event_replay() -> ReplayStatus:
 
 @app.post("/api/replay/stop", response_model=ReplayStatus, tags=["Replay Engine"])
 @app.post(f"{settings.API_V1_STR}/replay/stop", response_model=ReplayStatus, tags=["Replay Engine"])
-async def stop_event_replay() -> ReplayStatus:
+async def stop_event_replay(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> ReplayStatus:
     """
     Stop and reset security-event replay.
     """
@@ -537,7 +655,9 @@ async def stop_event_replay() -> ReplayStatus:
 
 @app.get("/api/replay/status", response_model=ReplayStatus, tags=["Replay Engine"])
 @app.get(f"{settings.API_V1_STR}/replay/status", response_model=ReplayStatus, tags=["Replay Engine"])
-async def get_event_replay_status() -> ReplayStatus:
+async def get_event_replay_status(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> ReplayStatus:
     """
     Get current state, progress indicator, emitted/remaining counts, and simulated timestamp.
     """
@@ -552,7 +672,8 @@ async def get_event_replay_status() -> ReplayStatus:
 async def websocket_event_stream(
     websocket: WebSocket,
     client_id: Optional[str] = Query(None),
-    last_sequence: Optional[int] = Query(None)
+    last_sequence: Optional[int] = Query(None),
+    token: Optional[str] = Query(None)
 ):
     """
     Real-time WebSocket event stream for SOC clients.
@@ -580,7 +701,9 @@ async def websocket_event_stream(
 
 @app.get("/api/events/stats", response_model=StreamStats, tags=["Event Streaming"])
 @app.get(f"{settings.API_V1_STR}/events/stats", response_model=StreamStats, tags=["Event Streaming"])
-async def get_event_streaming_stats() -> StreamStats:
+async def get_event_streaming_stats(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> StreamStats:
     """
     Get live streaming hub metrics (connected clients, events/sec, latest sequence).
     """
@@ -593,7 +716,9 @@ async def get_event_streaming_stats() -> StreamStats:
 
 @app.get("/api/incidents/active", response_model=List[ActiveIncident], tags=["Incident Detection"])
 @app.get(f"{settings.API_V1_STR}/incidents/active", response_model=List[ActiveIncident], tags=["Incident Detection"])
-async def get_active_incidents() -> List[ActiveIncident]:
+async def get_active_incidents(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> List[ActiveIncident]:
     """
     Get all active security incidents correlated from real-time SecurityEvent stream.
     """
@@ -601,7 +726,9 @@ async def get_active_incidents() -> List[ActiveIncident]:
 
 @app.get("/api/incidents/evaluation", response_model=EvaluationMetrics, tags=["Incident Detection"])
 @app.get(f"{settings.API_V1_STR}/incidents/evaluation", response_model=EvaluationMetrics, tags=["Incident Detection"])
-async def get_evaluation_metrics() -> EvaluationMetrics:
+async def get_evaluation_metrics(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> EvaluationMetrics:
     """
     Get online evaluation metrics (TP, FP, FN, Precision, Recall, F1) against dataset ground truth.
     """
@@ -609,7 +736,10 @@ async def get_evaluation_metrics() -> EvaluationMetrics:
 
 @app.get("/api/incidents/{incident_id}", response_model=ActiveIncident, tags=["Incident Detection"])
 @app.get(f"{settings.API_V1_STR}/incidents/{{incident_id}}", response_model=ActiveIncident, tags=["Incident Detection"])
-async def get_incident_detail(incident_id: str) -> ActiveIncident:
+async def get_incident_detail(
+    incident_id: str,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> ActiveIncident:
     """
     Get complete details of an active incident including dynamic attack graph and timeline.
     """
@@ -620,9 +750,11 @@ async def get_incident_detail(incident_id: str) -> ActiveIncident:
 
 @app.post("/api/incidents/reset", tags=["Incident Detection"])
 @app.post(f"{settings.API_V1_STR}/incidents/reset", tags=["Incident Detection"])
-async def reset_incidents_and_evaluation() -> Dict[str, str]:
+async def reset_incidents_and_evaluation(
+    current_user: AuthUser = Depends(require_admin)
+) -> Dict[str, str]:
     """
-    Reset real-time incident state, attack graphs, and evaluation metrics.
+    Reset real-time incident state, attack graphs, and evaluation metrics. Admin only.
     """
     realtime_detection_engine.reset()
     return {"status": "success", "message": "Incident state and evaluation metrics reset successfully."}
@@ -636,9 +768,14 @@ async def reset_incidents_and_evaluation() -> Dict[str, str]:
 @app.post(f"{settings.API_V1_STR}/events", response_model=AgentIngestionResponse, tags=["Agent Ingestion"])
 @app.post("/api/events/ingest", response_model=AgentIngestionResponse, tags=["Agent Ingestion"])
 @app.post(f"{settings.API_V1_STR}/events/ingest", response_model=AgentIngestionResponse, tags=["Agent Ingestion"])
-async def ingest_agent_events(batch: AgentEventBatch, request: Request) -> AgentIngestionResponse:
+async def ingest_agent_events(
+    batch: AgentEventBatch,
+    request: Request,
+    current_agent: AuthUser = Depends(require_agent_or_admin)
+) -> AgentIngestionResponse:
     """
     Ingest real security telemetry events sent by a lightweight Linux collector/agent.
+    Protected endpoint: requires valid agent API key/token or admin privileges.
     Updates agent heartbeat/statistics and forwards events to real-time streaming,
     detection, and incident correlation pipelines.
     """
@@ -681,9 +818,14 @@ async def ingest_agent_events(batch: AgentEventBatch, request: Request) -> Agent
 
 @app.post("/api/agents/register", response_model=AgentStatus, tags=["Agent Ingestion"])
 @app.post(f"{settings.API_V1_STR}/agents/register", response_model=AgentStatus, tags=["Agent Ingestion"])
-async def register_agent(reg: AgentRegistration, request: Request) -> AgentStatus:
+async def register_agent(
+    reg: AgentRegistration,
+    request: Request,
+    current_agent: AuthUser = Depends(require_agent_or_admin)
+) -> AgentStatus:
     """
     Register a new Linux agent or refresh an existing agent registration.
+    Protected endpoint: requires valid agent API key/token or admin privileges.
     """
     client_ip = request.client.host if request.client else None
     return agent_registry.register_or_update(
@@ -696,7 +838,9 @@ async def register_agent(reg: AgentRegistration, request: Request) -> AgentStatu
 
 @app.get("/api/agents", response_model=List[AgentStatus], tags=["Agent Ingestion"])
 @app.get(f"{settings.API_V1_STR}/agents", response_model=List[AgentStatus], tags=["Agent Ingestion"])
-async def list_registered_agents() -> List[AgentStatus]:
+async def list_registered_agents(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> List[AgentStatus]:
     """
     Get all live registered Linux agents with their operational statuses,
     last seen timestamps, and real-time EPS metrics.
@@ -705,7 +849,10 @@ async def list_registered_agents() -> List[AgentStatus]:
 
 @app.get("/api/agents/{agent_id}", response_model=AgentStatus, tags=["Agent Ingestion"])
 @app.get(f"{settings.API_V1_STR}/agents/{{agent_id}}", response_model=AgentStatus, tags=["Agent Ingestion"])
-async def get_agent_status(agent_id: str) -> AgentStatus:
+async def get_agent_status(
+    agent_id: str,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> AgentStatus:
     """
     Get detailed status for a specific registered Linux agent.
     """
@@ -721,7 +868,9 @@ async def get_agent_status(agent_id: str) -> AgentStatus:
 
 @app.get("/api/scenarios", response_model=List[PrebuiltScenario], tags=["Simulated Scenarios"])
 @app.get(f"{settings.API_V1_STR}/scenarios", response_model=List[PrebuiltScenario], tags=["Simulated Scenarios"])
-async def list_prebuilt_scenarios() -> List[PrebuiltScenario]:
+async def list_prebuilt_scenarios(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> List[PrebuiltScenario]:
     """
     List all prebuilt attack scenarios clearly categorized as SIMULATED ATTACK REPLAY.
     """
@@ -730,7 +879,9 @@ async def list_prebuilt_scenarios() -> List[PrebuiltScenario]:
 
 @app.get("/api/scenarios/status", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
 @app.get(f"{settings.API_V1_STR}/scenarios/status", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
-async def get_scenario_replay_status() -> SimulatedReplayStatus:
+async def get_scenario_replay_status(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> SimulatedReplayStatus:
     """
     Get current execution status of simulated attack scenario replay.
     """
@@ -738,7 +889,10 @@ async def get_scenario_replay_status() -> SimulatedReplayStatus:
 
 @app.get("/api/scenarios/{scenario_id}", response_model=PrebuiltScenario, tags=["Simulated Scenarios"])
 @app.get(f"{settings.API_V1_STR}/scenarios/{{scenario_id}}", response_model=PrebuiltScenario, tags=["Simulated Scenarios"])
-async def get_prebuilt_scenario(scenario_id: str) -> PrebuiltScenario:
+async def get_prebuilt_scenario(
+    scenario_id: str,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> PrebuiltScenario:
     """
     Get specific prebuilt simulated attack scenario details and expected MITRE techniques.
     """
@@ -751,7 +905,8 @@ async def get_prebuilt_scenario(scenario_id: str) -> PrebuiltScenario:
 @app.post(f"{settings.API_V1_STR}/scenarios/replay/{{scenario_id}}", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
 async def start_scenario_replay(
     scenario_id: str,
-    speed_multiplier: float = Query(2.0, ge=0.25, le=50.0)
+    speed_multiplier: float = Query(2.0, ge=0.25, le=50.0),
+    current_user: AuthUser = Depends(require_analyst_or_admin)
 ) -> SimulatedReplayStatus:
     """
     Start streaming simulated attack replay events live over WebSocket.
@@ -764,7 +919,9 @@ async def start_scenario_replay(
 
 @app.post("/api/scenarios/stop", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
 @app.post(f"{settings.API_V1_STR}/scenarios/stop", response_model=SimulatedReplayStatus, tags=["Simulated Scenarios"])
-async def stop_scenario_replay() -> SimulatedReplayStatus:
+async def stop_scenario_replay(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> SimulatedReplayStatus:
     """
     Stop active simulated attack scenario replay.
     """
@@ -782,7 +939,10 @@ class EvaluateRequest(BaseModel):
 
 
 @app.post(f"{settings.API_V1_STR}/telemetry/evaluate", response_model=EvaluationReport, tags=["Evaluation Engine"])
-async def evaluate_finding_against_ground_truth(req: EvaluateRequest) -> EvaluationReport:
+async def evaluate_finding_against_ground_truth(
+    req: EvaluateRequest,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> EvaluationReport:
     """
     Evaluation Engine API: Compare an AI Finding against hidden scenario Ground Truth metadata.
     Returns Precision, Recall, F1 Score, and Evidence Coverage %.
@@ -794,7 +954,9 @@ async def evaluate_finding_against_ground_truth(req: EvaluateRequest) -> Evaluat
     return EvaluationEngine.evaluate_finding(req.finding, req.evidence_list, gt)
 
 @app.post(f"{settings.API_V1_STR}/telemetry/lab/run", response_model=EvaluationRun, tags=["Evaluation Lab"])
-async def run_full_evaluation_benchmark():
+async def run_full_evaluation_benchmark(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+):
     """
     Run full AI Threat Hunter benchmark evaluation across all 8 attack scenarios.
     Calculates strict empirical Detection Rate, Precision, Recall, FP/FN rates, Evidence Coverage, and Tool Efficiency.
@@ -802,14 +964,19 @@ async def run_full_evaluation_benchmark():
     return await EvaluationLabRunner.run_full_benchmark()
 
 @app.get(f"{settings.API_V1_STR}/telemetry/lab/runs", tags=["Evaluation Lab"])
-async def list_evaluation_runs():
+async def list_evaluation_runs(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+):
     """
     List all historical evaluation benchmark runs for side-by-side reproducibility comparison.
     """
     return list(EVALUATION_RUN_STORE.values())
 
 @app.get(f"{settings.API_V1_STR}/telemetry/lab/runs/{{run_id}}", response_model=EvaluationRun, tags=["Evaluation Lab"])
-async def get_evaluation_run_detail(run_id: str) -> EvaluationRun:
+async def get_evaluation_run_detail(
+    run_id: str,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> EvaluationRun:
     """
     Fetch specific evaluation benchmark run details.
     """
@@ -818,16 +985,20 @@ async def get_evaluation_run_detail(run_id: str) -> EvaluationRun:
     return EVALUATION_RUN_STORE[run_id]
 
 @app.post(f"{settings.API_V1_STR}/security/adversarial/run", response_model=AdversarialSecurityReport, tags=["Adversarial Security Lab"])
-async def run_adversarial_security_suite():
+async def run_adversarial_security_suite(
+    current_user: AuthUser = Depends(require_admin)
+):
     """
     Run synthetic adversarial security test suite evaluating prompt injection resistance,
-    log payload sanitization, zero tool policy violations, and context flooding defenses.
+    log payload sanitization, zero tool policy violations, and context flooding defenses. Admin only.
     """
     _ADVERSARIAL_CACHE["report"] = None  # Force a fresh run on explicit POST.
     return await _get_cached_adversarial_report()
 
 @app.get(f"{settings.API_V1_STR}/security/adversarial/results", response_model=AdversarialSecurityReport, tags=["Adversarial Security Lab"])
-async def get_latest_adversarial_security_results() -> AdversarialSecurityReport:
+async def get_latest_adversarial_security_results(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> AdversarialSecurityReport:
     """
     Retrieve latest adversarial security test suite report and system security boundaries disclosure.
     """
@@ -845,21 +1016,38 @@ class HuntApproveRequest(BaseModel):
     approved: bool
 
 @app.post(f"{settings.API_V1_STR}/hunts/run", response_model=Hunt, tags=["Threat Hunting"])
-async def run_autonomous_hunt(request: HuntRunRequest) -> Hunt:
+async def run_autonomous_hunt(
+    request: HuntRunRequest,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> Hunt:
     """
     Execute a controlled threat hunt in ASSISTED or AUTONOMOUS mode.
     """
     engine = AutonomousHuntingEngine()
     try:
-        return await engine.execute_hunt(question=request.question, mode=request.mode)
+        return await engine.execute_hunt(
+            question=request.question,
+            mode=request.mode,
+            owner_id=current_user.user_id,
+            tenant_id=current_user.tenant_id
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post(f"{settings.API_V1_STR}/hunts/{{hunt_id}}/approve", response_model=Hunt, tags=["Threat Hunting"])
-async def approve_assisted_tool_call(hunt_id: str, request: HuntApproveRequest) -> Hunt:
+async def approve_assisted_tool_call(
+    hunt_id: str,
+    request: HuntApproveRequest,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> Hunt:
     """
-    Approve or reject a pending tool execution request in ASSISTED mode.
+    Approve or reject a pending tool execution request in ASSISTED mode with BOLA check.
     """
+    if hunt_id in HUNT_STATE_STORE:
+        hunt = HUNT_STATE_STORE[hunt_id]
+        if current_user.role != UserRole.ADMIN and hunt.owner_id not in [current_user.user_id, "system-demo"] and hunt.tenant_id != current_user.tenant_id:
+            raise HTTPException(status_code=403, detail="Forbidden: You do not have permission to approve actions on this hunt.")
+
     engine = AutonomousHuntingEngine()
     try:
         return await engine.resume_assisted_hunt(hunt_id=hunt_id, approved=request.approved)
@@ -868,13 +1056,18 @@ async def approve_assisted_tool_call(hunt_id: str, request: HuntApproveRequest) 
 
 
 @app.get(f"{settings.API_V1_STR}/hunts/{{hunt_id}}/audit", tags=["Threat Hunting"])
-async def get_hunt_audit_log(hunt_id: str):
+async def get_hunt_audit_log(
+    hunt_id: str,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+):
     """
-    Retrieve the complete reproducible audit trail for a hunt.
+    Retrieve the complete reproducible audit trail for a hunt with BOLA check.
     """
     if hunt_id not in HUNT_STATE_STORE:
         raise HTTPException(status_code=404, detail=f"Hunt '{hunt_id}' not found.")
     hunt = HUNT_STATE_STORE[hunt_id]
+    if current_user.role != UserRole.ADMIN and hunt.owner_id not in [current_user.user_id, "system-demo"] and hunt.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not have permission to view this hunt audit log.")
     return {
         "huntId": hunt.id,
         "mode": hunt.mode,
@@ -882,13 +1075,15 @@ async def get_hunt_audit_log(hunt_id: str):
     }
 
 @app.get(f"{settings.API_V1_STR}/hunts/{{hunt_id}}/graph", tags=["Threat Hunting"])
-async def get_hunt_investigation_graph(hunt_id: str):
+async def get_hunt_investigation_graph(
+    hunt_id: str,
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+):
     """
-    Retrieve the evidence-grounded Security Indicator relationship graph (IP -> USER -> HOST -> PROCESS -> FILE).
+    Retrieve the evidence-grounded Security Indicator relationship graph with BOLA check.
     """
     if hunt_id not in HUNT_STATE_STORE:
         # Explicit demo alias only — unknown IDs are a 404, not silent
-        # sample data (the old fallback masked missing hunts from analysts).
         if hunt_id != "demo":
             raise HTTPException(status_code=404, detail=f"Hunt '{hunt_id}' not found.")
         sample_ev = [
@@ -910,13 +1105,17 @@ async def get_hunt_investigation_graph(hunt_id: str):
         return InvestigationGraphBuilder.build_graph(sample_ev).model_dump()
 
     hunt = HUNT_STATE_STORE[hunt_id]
+    if current_user.role != UserRole.ADMIN and hunt.owner_id not in [current_user.user_id, "system-demo"] and hunt.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not have permission to view this hunt graph.")
     graph = InvestigationGraphBuilder.build_graph(hunt.evidence, hunt.findings)
     return graph.model_dump()
 
 
 
 @app.get(f"{settings.API_V1_STR}/hunts/sample", response_model=Hunt, tags=["Threat Hunting"])
-async def get_sample_hunt() -> Hunt:
+async def get_sample_hunt(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> Hunt:
     """
     Return a structured sample Hunt object demonstrating Phase 1-5 schema validation & UI layout.
     """

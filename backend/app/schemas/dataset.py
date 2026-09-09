@@ -72,6 +72,8 @@ class DatasetMetadata(BaseModel):
     attack_categories: Dict[str, int] = Field(default_factory=dict)
     malformed_records_count: int = 0
     errors: List[ValidationErrorRecord] = Field(default_factory=list)
+    owner_id: Optional[str] = Field(default="system-demo", description="Owner user ID for BOLA access control")
+    tenant_id: Optional[str] = Field(default="soc-org-primary", description="Tenant organization ID")
 
 class DatasetImportReport(BaseModel):
     dataset: DatasetMetadata

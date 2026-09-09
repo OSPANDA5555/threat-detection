@@ -85,13 +85,17 @@ def test_evaluation_engine():
     assert report.isAccurate is True
 
 def test_telemetry_rest_api_endpoints():
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    analyst_headers = {"Authorization": f"Bearer {create_access_token('usr-analyst-01', 'analyst', UserRole.ANALYST)}"}
+
     # 1. GET /api/v1/telemetry/scenarios
-    res_sc = client.get("/api/v1/telemetry/scenarios")
+    res_sc = client.get("/api/v1/telemetry/scenarios", headers=analyst_headers)
     assert res_sc.status_code == 200
     assert len(res_sc.json()) == 8
 
     # 2. GET /api/v1/telemetry/events
-    res_ev = client.get("/api/v1/telemetry/events?host=web-server-01&limit=10")
+    res_ev = client.get("/api/v1/telemetry/events?host=web-server-01&limit=10", headers=analyst_headers)
     assert res_ev.status_code == 200
     events = res_ev.json()
     assert len(events) > 0
@@ -112,7 +116,7 @@ def test_telemetry_rest_api_endpoints():
         },
         "evidence_list": []
     }
-    res_eval = client.post("/api/v1/telemetry/evaluate", json=eval_payload)
+    res_eval = client.post("/api/v1/telemetry/evaluate", json=eval_payload, headers=analyst_headers)
     assert res_eval.status_code == 200
     report = res_eval.json()
     assert report["scenarioId"] == "ssh-bruteforce"
@@ -120,6 +124,10 @@ def test_telemetry_rest_api_endpoints():
     assert "recall" in report
 
 def test_cross_workstation_telemetry_collection():
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    analyst_headers = {"Authorization": f"Bearer {create_access_token('usr-analyst-01', 'analyst', UserRole.ANALYST)}"}
+
     # 1. Direct engine collection
     collected = telemetry_engine.collect_cross_workstation_telemetry(
         hosts=["workstation-01", "jump-host-01", "web-server-01"],
@@ -136,14 +144,18 @@ def test_cross_workstation_telemetry_collection():
         "hosts": ["workstation-01", "web-server-01"],
         "log_sources": ["auth", "process"],
         "limit": 30
-    })
+    }, headers=analyst_headers)
     assert res_coll.status_code == 200
     data = res_coll.json()
     assert data["total_events_collected"] > 0
     assert len(data["events"]) <= 30
 
 def test_workstation_inventory_endpoint():
-    res_inv = client.get("/api/v1/telemetry/workstations")
+    from app.auth.models import UserRole
+    from app.auth.security import create_access_token
+    analyst_headers = {"Authorization": f"Bearer {create_access_token('usr-analyst-01', 'analyst', UserRole.ANALYST)}"}
+
+    res_inv = client.get("/api/v1/telemetry/workstations", headers=analyst_headers)
     assert res_inv.status_code == 200
     inventory = res_inv.json()
     assert len(inventory) == 5
