@@ -14,17 +14,19 @@ class EventStreamingHub:
     """
     Real-Time Security Event Streaming Hub.
     Manages active WebSocket client connections, assigns monotonic sequence numbers,
-    maintains a circular historical replay buffer for seamless duplicate-free reconnects,
-    and applies backpressure handling for broadcast performance.
+    enforces tenant data isolation, maintains a circular historical replay buffer,
+    bounds connection resources, and applies backpressure handling for broadcast performance.
     """
 
-    def __init__(self, max_buffer_size: int = 10000):
+    def __init__(self, max_buffer_size: int = 10000, max_connections: int = 100):
         self._active_connections: Set[WebSocket] = set()
+        self._client_meta: Dict[WebSocket, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
         self._global_sequence: int = 0
         self._historical_buffer: deque = deque(maxlen=max_buffer_size)
         self._recent_timestamps: deque = deque(maxlen=500)
         self._total_events_streamed: int = 0
+        self._max_connections = max_connections
 
     @property
     def latest_sequence(self) -> int:
@@ -33,7 +35,6 @@ class EventStreamingHub:
     def get_stats(self) -> StreamStats:
         """Calculate real-time streaming metrics."""
         now = time.time()
-        # Calculate EPS over last 2 seconds window
         cutoff = now - 2.0
         while self._recent_timestamps and self._recent_timestamps[0] < cutoff:
             self._recent_timestamps.popleft()
@@ -52,36 +53,74 @@ class EventStreamingHub:
         self,
         websocket: WebSocket,
         client_id: Optional[str] = None,
-        last_sequence: Optional[int] = None
-    ) -> None:
-        """Accepts a WebSocket connection and backfills missed events if last_sequence is provided."""
+        last_sequence: Optional[int] = None,
+        user_id: Optional[str] = "analyst",
+        role: Optional[str] = "ANALYST",
+        tenant_id: Optional[str] = "soc-org-primary"
+    ) -> bool:
+        """
+        Accepts a WebSocket connection, enforces resource caps, records client metadata,
+        and securely backfills missed events within tenant boundaries.
+        """
+        # Enforce maximum concurrent connections cap (DoS guard)
+        if len(self._active_connections) >= self._max_connections:
+            await websocket.close(code=1013, reason="Maximum active WebSocket connections exceeded.")
+            return False
+
         await websocket.accept()
+        cid = client_id or "anonymous"
+        t_id = tenant_id or "soc-org-primary"
+        r_val = role or "ANALYST"
+
         async with self._lock:
             self._active_connections.add(websocket)
-        
+            self._client_meta[websocket] = {
+                "client_id": cid,
+                "user_id": user_id or "analyst",
+                "role": r_val,
+                "tenant_id": t_id,
+                "connected_at": time.time(),
+                "last_msg_time": time.time(),
+                "msg_count_window": 0
+            }
+
         # Send initial handshake message
         welcome_msg = {
             "type": "connected",
-            "client_id": client_id or "anonymous",
+            "client_id": cid,
+            "tenant_id": t_id,
             "latest_sequence": self._global_sequence,
             "server_time": time.time()
         }
         await websocket.send_text(json.dumps(welcome_msg))
 
-        # Reconnect backfill: if client specified last_sequence, stream missing historical events
+        # Reconnect backfill: securely stream missing historical events belonging to client's tenant
         if last_sequence is not None and last_sequence >= 0:
-            await self._backfill_missed_events(websocket, last_sequence)
+            await self._backfill_missed_events(websocket, last_sequence, t_id, r_val)
+
+        return True
 
     async def disconnect(self, websocket: WebSocket) -> None:
-        """Safely removes disconnected WebSocket client."""
+        """Safely removes disconnected WebSocket client and associated metadata."""
         async with self._lock:
             if websocket in self._active_connections:
                 self._active_connections.remove(websocket)
+            self._client_meta.pop(websocket, None)
 
-    async def _backfill_missed_events(self, websocket: WebSocket, last_sequence: int) -> None:
-        """Sends historical buffered events with sequence > last_sequence."""
-        missed = [evt for evt in self._historical_buffer if evt.sequence > last_sequence]
-        for evt in missed:
+    async def _backfill_missed_events(
+        self,
+        websocket: WebSocket,
+        last_sequence: int,
+        tenant_id: str = "soc-org-primary",
+        role: str = "ANALYST"
+    ) -> None:
+        """Sends historical buffered events matching sequence and tenant authorization (capped at 200)."""
+        missed = [
+            evt for evt in self._historical_buffer
+            if evt.sequence > last_sequence and (role == "ADMIN" or getattr(evt, "metadata", {}).get("tenant_id", "soc-org-primary") in [tenant_id, "soc-org-primary"])
+        ]
+        # Cap backfill window
+        for evt in missed[:200]:
             try:
                 await websocket.send_text(json.dumps(evt.model_dump()))
             except Exception as e:
@@ -91,7 +130,7 @@ class EventStreamingHub:
     async def broadcast_event(self, raw_event: Union[Dict[str, Any], Any]) -> StreamedEvent:
         """
         Assigns the next monotonic sequence number, creates a standardized StreamedEvent,
-        appends to ring buffer, and non-blockingly broadcasts to all connected SOC clients.
+        appends to ring buffer, and non-blockingly broadcasts to authorized tenant clients.
         """
         async with self._lock:
             self._global_sequence += 1
@@ -120,6 +159,7 @@ class EventStreamingHub:
             )
 
         timestamp_str = str(data.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        event_tenant = data.get("tenant_id") or data.get("metadata", {}).get("tenant_id") or "soc-org-primary"
 
         streamed = StreamedEvent(
             type="event",
@@ -146,7 +186,7 @@ class EventStreamingHub:
             severity=str(data.get("severity") or ("HIGH" if data.get("label", "BENIGN") != "BENIGN" else "INFO")),
             label=str(data.get("label") or "BENIGN"),
             raw_data=data.get("raw_data") or data,
-            metadata=data.get("metadata") or {}
+            metadata=data.get("metadata") or {"tenant_id": event_tenant}
         )
 
         # Store in historical circular buffer
@@ -156,19 +196,26 @@ class EventStreamingHub:
         from app.detection.engine import realtime_detection_engine
         alerts = realtime_detection_engine.process_event(streamed)
 
-        # Broadcast to active connections
+        # Broadcast to active connections matching tenant authorization
         if self._active_connections:
             msg_json = json.dumps(streamed.model_dump())
             dead_sockets = set()
 
             for ws in list(self._active_connections):
+                meta = self._client_meta.get(ws, {})
+                client_tenant = meta.get("tenant_id", "soc-org-primary")
+                client_role = meta.get("role", "ANALYST")
+
+                # Tenant authorization barrier
+                if client_role != "ADMIN" and client_tenant != event_tenant and event_tenant != "soc-org-primary":
+                    continue
+
                 try:
-                    # Non-blocking send
                     await asyncio.wait_for(ws.send_text(msg_json), timeout=0.5)
-                except (WebSocketDisconnect, asyncio.TimeoutError, Exception) as e:
+                except (WebSocketDisconnect, asyncio.TimeoutError, Exception):
                     dead_sockets.add(ws)
 
-            # If behavioral detections triggered, broadcast detection alerts immediately
+            # Broadcast detection alerts with tenant matching
             for alert in alerts:
                 alert_payload = json.dumps({
                     "type": "detection_alert",
@@ -176,6 +223,11 @@ class EventStreamingHub:
                     "active_incidents_count": len(realtime_detection_engine.get_active_incidents())
                 })
                 for ws in list(self._active_connections):
+                    meta = self._client_meta.get(ws, {})
+                    client_tenant = meta.get("tenant_id", "soc-org-primary")
+                    client_role = meta.get("role", "ANALYST")
+                    if client_role != "ADMIN" and client_tenant != event_tenant and event_tenant != "soc-org-primary":
+                        continue
                     try:
                         await asyncio.wait_for(ws.send_text(alert_payload), timeout=0.5)
                     except Exception:
@@ -184,15 +236,19 @@ class EventStreamingHub:
             if dead_sockets:
                 async with self._lock:
                     self._active_connections -= dead_sockets
+                    for ws in dead_sockets:
+                        self._client_meta.pop(ws, None)
 
         return streamed
 
     def reset(self):
-        """Resets sequences and buffer for testing."""
+        """Resets sequences, client metadata, and buffer for testing."""
         self._global_sequence = 0
         self._total_events_streamed = 0
         self._historical_buffer.clear()
         self._recent_timestamps.clear()
+        self._client_meta.clear()
+
 
 
 # Global singleton streaming hub

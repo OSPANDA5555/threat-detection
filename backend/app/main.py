@@ -46,6 +46,7 @@ from app.scenarios.definitions import get_prebuilt_scenarios, PrebuiltScenario
 from app.scenarios.engine import simulated_scenario_runner, SimulatedReplayStatus
 from app.schemas.health import ComprehensiveHealthReport, SubsystemHealth
 from app.ingestion.service import dataset_service
+from app.core.audit import AuditLogger
 
 # Initialize FastAPI application
 app = FastAPI(
@@ -719,13 +720,29 @@ async def websocket_event_stream(
     Real-time WebSocket event stream for SOC clients.
     Supports token verification, automatic reconnects, sequence tracking, and duplicate prevention.
     """
+    user_id = "analyst"
+    role = "ANALYST"
+    tenant_id = "soc-org-primary"
+
     if token:
         payload = verify_token(token)
         if not payload:
             await websocket.close(code=1008, reason="Invalid or expired authentication token")
             return
+        user_id = payload.sub
+        role = payload.role.value if hasattr(payload.role, "value") else str(payload.role)
+        tenant_id = payload.tenant_id
 
-    await streaming_hub.connect(websocket, client_id=client_id, last_sequence=last_sequence)
+    connected = await streaming_hub.connect(
+        websocket,
+        client_id=client_id,
+        last_sequence=last_sequence,
+        user_id=user_id,
+        role=role,
+        tenant_id=tenant_id
+    )
+    if not connected:
+        return
 
     try:
         while True:
@@ -738,13 +755,25 @@ async def websocket_event_stream(
                 elif msg_type == "subscribe" or msg_type == "sync":
                     req_last_seq = msg.get("last_sequence")
                     if req_last_seq is not None:
-                        await streaming_hub._backfill_missed_events(websocket, int(req_last_seq))
+                        await streaming_hub._backfill_missed_events(websocket, int(req_last_seq), tenant_id, role)
             except json.JSONDecodeError:
                 pass
     except WebSocketDisconnect:
         await streaming_hub.disconnect(websocket)
-    except Exception:
+        AuditLogger.log_websocket_disconnect(
+            client_id=client_id or "anonymous",
+            reason="client_disconnect",
+            active_connections=len(streaming_hub._active_connections),
+            tenant_id=tenant_id
+        )
+    except Exception as e:
         await streaming_hub.disconnect(websocket)
+        AuditLogger.log_websocket_disconnect(
+            client_id=client_id or "anonymous",
+            reason=f"error: {str(e)}",
+            active_connections=len(streaming_hub._active_connections),
+            tenant_id=tenant_id
+        )
 
 @app.get("/api/events/stats", response_model=StreamStats, tags=["Event Streaming"])
 @app.get(f"{settings.API_V1_STR}/events/stats", response_model=StreamStats, tags=["Event Streaming"])
@@ -827,32 +856,84 @@ async def ingest_agent_events(
     detection, and incident correlation pipelines.
     """
     client_ip = request.client.host if request.client else None
-    
-    # 1. Update agent registry state
+    tenant_id = getattr(current_agent, "tenant_id", "soc-org-primary")
+
+    # 1. Anti-impersonation check: ensure authenticated caller owns this agent_id
+    is_valid, msg = agent_registry.validate_agent_access(
+        batch.agent_id,
+        current_agent.username,
+        current_agent.role,
+        tenant_id
+    )
+    if not is_valid:
+        AuditLogger.log_rejected_events(
+            agent_id=batch.agent_id,
+            reason=msg,
+            sequence_number=batch.sequence_number,
+            count=len(batch.events),
+            ip_address=client_ip
+        )
+        raise HTTPException(status_code=403, detail=msg)
+
+    # 2. Replay Protection: validate monotonic sequence ordering
+    is_seq_valid, seq_msg = agent_registry.validate_sequence(batch.agent_id, batch.sequence_number)
+    if not is_seq_valid:
+        AuditLogger.log_rejected_events(
+            agent_id=batch.agent_id,
+            reason=seq_msg,
+            sequence_number=batch.sequence_number,
+            count=len(batch.events),
+            ip_address=client_ip
+        )
+        raise HTTPException(status_code=400, detail=seq_msg)
+
+    # 3. Abnormal EPS rate limiting
+    is_rate_ok, current_eps = agent_registry.check_rate_limit(batch.agent_id, len(batch.events))
+    if not is_rate_ok:
+        AuditLogger.log_abnormal_event_rate(
+            agent_id=batch.agent_id,
+            current_eps=current_eps,
+            threshold_eps=500.0,
+            count=len(batch.events),
+            ip_address=client_ip
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded: Agent '{batch.agent_id}' transmitting at abnormal rate ({round(current_eps, 1)} EPS)."
+        )
+
+    # 4. Duplicate Event Flood Rejection
+    unique_events = agent_registry.filter_duplicate_events(batch.agent_id, batch.events)
+
+    # 5. Update agent registry state
     agent_registry.record_ingestion(
         agent_id=batch.agent_id,
         hostname=batch.hostname,
         agent_version=batch.agent_version,
         sequence_number=batch.sequence_number,
-        events_count=len(batch.events),
-        ip_address=client_ip
+        events_count=len(unique_events),
+        ip_address=client_ip,
+        bound_caller_id=current_agent.username,
+        tenant_id=tenant_id
     )
 
-    # 2. Normalize and broadcast each event into the real-time pipeline
+    # 6. Normalize and broadcast each event into the real-time pipeline
     ingested_count = 0
-    for raw_item in batch.events:
+    for raw_item in unique_events:
         try:
-            # If already canonical or raw dict, ensure hostname and agent metadata are attached
+            # If already canonical or raw dict, ensure hostname, agent metadata, and tenant are attached
             if isinstance(raw_item, dict):
                 if not raw_item.get("hostname"):
                     raw_item["hostname"] = batch.hostname
                 if not raw_item.get("source"):
                     raw_item["source"] = f"agent:{batch.agent_id}"
+                if not raw_item.get("tenant_id"):
+                    raw_item["tenant_id"] = tenant_id
 
             # Broadcast to WebSocket clients & real-time detection pipeline
             await streaming_hub.broadcast_event(raw_item)
             ingested_count += 1
-        except Exception as e:
+        except Exception:
             pass
 
     return AgentIngestionResponse(
@@ -875,13 +956,43 @@ async def register_agent(
     Protected endpoint: requires valid agent API key/token or admin privileges.
     """
     client_ip = request.client.host if request.client else None
-    return agent_registry.register_or_update(
+    tenant_id = getattr(current_agent, "tenant_id", "soc-org-primary")
+
+    # Anti-impersonation check
+    is_valid, msg = agent_registry.validate_agent_access(
+        reg.agent_id,
+        current_agent.username,
+        current_agent.role,
+        tenant_id
+    )
+    if not is_valid:
+        AuditLogger.log_rejected_events(
+            agent_id=reg.agent_id,
+            reason=msg,
+            ip_address=client_ip
+        )
+        raise HTTPException(status_code=403, detail=msg)
+
+    status_obj = agent_registry.register_or_update(
         agent_id=reg.agent_id,
         hostname=reg.hostname,
         agent_version=reg.agent_version,
         platform=reg.platform,
-        ip_address=client_ip or reg.ip_address
+        ip_address=client_ip or reg.ip_address,
+        bound_caller_id=current_agent.username,
+        tenant_id=tenant_id
     )
+
+    AuditLogger.log_agent_registration(
+        agent_id=reg.agent_id,
+        hostname=reg.hostname,
+        ip_address=client_ip or reg.ip_address,
+        platform=reg.platform,
+        status="SUCCESS",
+        tenant_id=tenant_id
+    )
+
+    return status_obj
 
 @app.get("/api/agents", response_model=List[AgentStatus], tags=["Agent Ingestion"])
 @app.get(f"{settings.API_V1_STR}/agents", response_model=List[AgentStatus], tags=["Agent Ingestion"])
