@@ -47,6 +47,7 @@ from app.scenarios.engine import simulated_scenario_runner, SimulatedReplayStatu
 from app.schemas.health import ComprehensiveHealthReport, SubsystemHealth
 from app.ingestion.service import dataset_service
 from app.core.audit import AuditLogger
+from app.core.abuse import abuse_monitor
 
 # Initialize FastAPI application
 app = FastAPI(
@@ -90,6 +91,7 @@ async def add_security_headers_and_rate_limit(request: Request, call_next):
     content_length = request.headers.get("content-length")
     max_payload_bytes = getattr(settings, "MAX_UPLOAD_SIZE_MB", 25) * 1024 * 1024
     if content_length and int(content_length) > max_payload_bytes:
+        abuse_monitor.record_payload_too_large(client_ip, int(content_length))
         return JSONResponse(
             status_code=413,
             content={"detail": f"Request entity too large. Maximum allowed size is {settings.MAX_UPLOAD_SIZE_MB}MB."}
@@ -103,6 +105,7 @@ async def add_security_headers_and_rate_limit(request: Request, call_next):
         key_prefix="global"
     )
     if not allowed:
+        abuse_monitor.record_rate_limit_hit(client_ip, "global_http")
         return JSONResponse(status_code=429, content={"detail": msg})
 
     response = await call_next(request)
@@ -359,6 +362,19 @@ async def get_comprehensive_health_report() -> ComprehensiveHealthReport:
     )
 
 
+@app.get("/api/monitoring/abuse-metrics", tags=["Health & Monitoring"])
+@app.get(f"{settings.API_V1_STR}/monitoring/abuse-metrics", tags=["Health & Monitoring"])
+async def get_abuse_prevention_metrics(
+    current_user: AuthUser = Depends(require_analyst_or_admin)
+) -> Dict[str, Any]:
+    """
+    Retrieve live operational abuse prevention metrics, active concurrency counters,
+    and rate limit violation statistics.
+    """
+    return abuse_monitor.get_metrics_report()
+
+
+
 @app.get(f"{settings.API_V1_STR}/tools", response_model=List[ToolDefinition], tags=["Tool Gateway"])
 async def list_tools(current_user: AuthUser = Depends(require_analyst_or_admin)) -> List[ToolDefinition]:
     """List all approved read-only tools registered in the Tool Gateway."""
@@ -479,6 +495,7 @@ class RawDatasetImportRequest(BaseModel):
 
 @app.post(f"{settings.API_V1_STR}/datasets/import/file", response_model=DatasetImportReport, tags=["Dataset Ingestion"])
 async def import_dataset_file(
+    request: Request,
     file: UploadFile = File(...),
     dataset_name: Optional[str] = Form(None),
     format_hint: Optional[str] = Form(None),
@@ -486,12 +503,19 @@ async def import_dataset_file(
 ) -> DatasetImportReport:
     """
     Import and normalize cybersecurity datasets (CIC-IDS2017 CSV, NetFlow, JSON events, or PCAP).
-    Protected: Analyst or Admin role required.
+    Protected: Analyst or Admin role required with rate limiting.
     """
+    client_ip = getattr(request.state, "client_ip", "127.0.0.1")
+    allowed, msg = check_rate_limit(client_ip, max_requests=settings.DATASET_UPLOAD_RATE_LIMIT_MAX, window_seconds=60, key_prefix="dataset_import")
+    if not allowed:
+        abuse_monitor.record_rate_limit_hit(client_ip, "dataset_import")
+        raise HTTPException(status_code=429, detail="Too many dataset upload requests. Please wait before uploading again.")
+
     # Max upload limit check (25 MB)
     max_upload_bytes = getattr(settings, "MAX_UPLOAD_SIZE_MB", 25) * 1024 * 1024
     file_bytes = await file.read()
     if len(file_bytes) > max_upload_bytes:
+        abuse_monitor.record_payload_too_large(client_ip, len(file_bytes))
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File size exceeds maximum upload limit of {settings.MAX_UPLOAD_SIZE_MB} MB."
@@ -509,15 +533,23 @@ async def import_dataset_file(
 @app.post(f"{settings.API_V1_STR}/datasets/import/raw", response_model=DatasetImportReport, tags=["Dataset Ingestion"])
 async def import_raw_dataset(
     req: RawDatasetImportRequest,
+    req_http: Request,
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ) -> DatasetImportReport:
     """
-    Import and normalize dataset from raw text / payload string.
+    Import and normalize dataset from raw text / payload string with rate limiting.
     Protected: Analyst or Admin role required.
     """
+    client_ip = getattr(req_http.state, "client_ip", "127.0.0.1")
+    allowed, msg = check_rate_limit(client_ip, max_requests=settings.DATASET_UPLOAD_RATE_LIMIT_MAX, window_seconds=60, key_prefix="dataset_import")
+    if not allowed:
+        abuse_monitor.record_rate_limit_hit(client_ip, "dataset_import")
+        raise HTTPException(status_code=429, detail="Too many dataset upload requests. Please wait before uploading again.")
+
     content_bytes = req.content.encode("utf-8")
     max_upload_bytes = getattr(settings, "MAX_UPLOAD_SIZE_MB", 25) * 1024 * 1024
     if len(content_bytes) > max_upload_bytes:
+        abuse_monitor.record_payload_too_large(client_ip, len(content_bytes))
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"Payload size exceeds maximum upload limit of {settings.MAX_UPLOAD_SIZE_MB} MB."
@@ -757,6 +789,12 @@ async def websocket_event_stream(
     if not connected:
         return
 
+    client_ip = websocket.client.host if websocket.client else "127.0.0.1"
+    has_slot, slot_msg = abuse_monitor.acquire_websocket_slot(client_ip, max_concurrent_per_ip=10, max_global=100)
+    if not has_slot:
+        await websocket.close(code=1008, reason=slot_msg)
+        return
+
     try:
         while True:
             raw_text = await websocket.receive_text()
@@ -787,6 +825,8 @@ async def websocket_event_stream(
             active_connections=len(streaming_hub._active_connections),
             tenant_id=tenant_id
         )
+    finally:
+        abuse_monitor.release_websocket_slot(client_ip)
 
 @app.get("/api/events/stats", response_model=StreamStats, tags=["Event Streaming"])
 @app.get(f"{settings.API_V1_STR}/events/stats", response_model=StreamStats, tags=["Event Streaming"])
@@ -1201,9 +1241,15 @@ async def run_autonomous_hunt(
     Enforces hunt-specific rate limiting (max 20 hunts/min per IP).
     """
     client_ip = getattr(req_http.state, "client_ip", "127.0.0.1")
-    allowed, msg = check_rate_limit(client_ip, max_requests=20, window_seconds=60, key_prefix="hunt_run")
+    allowed, msg = check_rate_limit(client_ip, max_requests=settings.HUNT_RATE_LIMIT_MAX, window_seconds=60, key_prefix="hunt_run")
     if not allowed:
+        abuse_monitor.record_rate_limit_hit(client_ip, "hunt_run")
         raise HTTPException(status_code=429, detail="Too many hunt execution requests. Please wait before starting another hunt.")
+
+    # Concurrency limit check (max 5 active hunts per IP)
+    has_slot, slot_msg = abuse_monitor.acquire_hunt_slot(client_ip, max_concurrent=5)
+    if not has_slot:
+        raise HTTPException(status_code=429, detail=slot_msg)
 
     engine = AutonomousHuntingEngine()
     try:
@@ -1215,6 +1261,8 @@ async def run_autonomous_hunt(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        abuse_monitor.release_hunt_slot(client_ip)
 
 @app.post(f"{settings.API_V1_STR}/hunts/{{hunt_id}}/approve", response_model=Hunt, tags=["Threat Hunting"])
 async def approve_assisted_tool_call(

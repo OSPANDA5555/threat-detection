@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     # Rate limiting defaults for the HTTP middleware
     RATE_LIMIT_MAX_REQUESTS: int = Field(default=150, ge=1, le=10000)
     RATE_LIMIT_WINDOW_SECONDS: int = Field(default=60, ge=1, le=3600)
+    DATASET_UPLOAD_RATE_LIMIT_MAX: int = Field(default=60, ge=1, le=1000)
+    HUNT_RATE_LIMIT_MAX: int = Field(default=60, ge=1, le=1000)
 
     # Adversarial report cache TTL (seconds) — avoids re-running the full
     # 8-hunt suite on every GET.
