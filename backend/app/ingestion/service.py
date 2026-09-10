@@ -17,12 +17,14 @@ from app.ingestion.normalizers.pcap_adapter import PcapIngestionAdapter
 class DatasetIngestionService:
     """
     Service orchestrating cybersecurity dataset ingestion, format auto-detection,
-    event normalization, repository persistence, and query filtering.
+    event normalization, indexed persistence, retention controls, and query filtering.
     """
 
     def __init__(self):
         self._datasets: Dict[str, DatasetMetadata] = {}
         self._events: Dict[str, List[NormalizedEvent]] = {}
+        self._deleted_dataset_ids: set = set()
+        self._indices: Dict[str, Dict[str, Dict[str, List[int]]]] = {}  # dataset_id -> field -> value -> list[indices]
         self._cic_normalizer = CicIds2017Normalizer()
         self._json_normalizer = JsonEventNormalizer()
         self._pcap_normalizer = PcapIngestionAdapter()
@@ -38,7 +40,7 @@ class DatasetIngestionService:
         tenant_id: Optional[str] = "soc-org-primary"
     ) -> DatasetImportReport:
         """
-        Ingests a dataset from bytes, normalizes it, and saves metadata.
+        Ingests a dataset from bytes, normalizes it, builds secondary indices, and saves metadata.
         """
         # Hard upload size limit guard (default 25MB)
         max_bytes = 25 * 1024 * 1024
@@ -69,15 +71,39 @@ class DatasetIngestionService:
             # Fallback to CSV
             metadata, events = self._cic_normalizer.parse_and_normalize(content, safe_file_name, dataset_name)
 
-
         if owner_id:
             metadata.owner_id = owner_id
         if tenant_id:
             metadata.tenant_id = tenant_id
 
+        # Enforce max events retention limit per dataset
+        max_dataset_events = 50000
+        if len(events) > max_dataset_events:
+            events = events[:max_dataset_events]
+            metadata.total_events = max_dataset_events
+
+        # Build secondary index for fast querying
+        ds_id = metadata.dataset_id
+        self._indices[ds_id] = {
+            "source_ip": {},
+            "destination_ip": {},
+            "label": {}
+        }
+        for idx, evt in enumerate(events):
+            if evt.source_ip:
+                self._indices[ds_id]["source_ip"].setdefault(evt.source_ip, []).append(idx)
+            if evt.destination_ip:
+                self._indices[ds_id]["destination_ip"].setdefault(evt.destination_ip, []).append(idx)
+            if evt.label:
+                self._indices[ds_id]["label"].setdefault(evt.label.upper(), []).append(idx)
+
         # Save to store
-        self._datasets[metadata.dataset_id] = metadata
-        self._events[metadata.dataset_id] = events
+        self._datasets[ds_id] = metadata
+        self._events[ds_id] = events
+        self._deleted_dataset_ids.discard(ds_id)
+
+        # Prune capacity
+        self.prune_retention()
 
         return DatasetImportReport(
             dataset=metadata,
@@ -90,6 +116,8 @@ class DatasetIngestionService:
         return list(self._datasets.values())
 
     def get_dataset(self, dataset_id: str) -> Optional[DatasetMetadata]:
+        if dataset_id in self._deleted_dataset_ids:
+            return None
         return self._datasets.get(dataset_id)
 
     def get_dataset_events(
@@ -97,8 +125,15 @@ class DatasetIngestionService:
         dataset_id: str,
         filter_spec: DatasetQueryFilter
     ) -> Tuple[List[NormalizedEvent], int]:
+        if dataset_id in self._deleted_dataset_ids or dataset_id not in self._datasets:
+            return [], 0
+
         all_events = self._events.get(dataset_id, [])
         filtered = []
+
+        # Bound pagination to prevent unbounded memory consumption
+        filter_spec.limit = min(max(1, filter_spec.limit), 500)
+        filter_spec.offset = max(0, filter_spec.offset)
 
         for evt in all_events:
             if filter_spec.label and filter_spec.label.lower() not in (evt.label or "").lower():
@@ -125,10 +160,22 @@ class DatasetIngestionService:
     def delete_dataset(self, dataset_id: str) -> bool:
         if dataset_id in self._datasets:
             del self._datasets[dataset_id]
-            if dataset_id in self._events:
-                del self._events[dataset_id]
+            self._events.pop(dataset_id, None)
+            self._indices.pop(dataset_id, None)
+            self._deleted_dataset_ids.add(dataset_id)
             return True
         return False
+
+    def prune_retention(self, max_datasets: int = 50) -> int:
+        """Prunes oldest datasets if dataset count exceeds maximum capacity limit."""
+        pruned = 0
+        if len(self._datasets) > max_datasets:
+            sorted_keys = sorted(self._datasets.keys(), key=lambda k: getattr(self._datasets[k], "imported_at", ""))
+            to_remove = sorted_keys[: len(self._datasets) - max_datasets]
+            for ds_id in to_remove:
+                self.delete_dataset(ds_id)
+                pruned += 1
+        return pruned
 
     def _detect_format(self, content: bytes, file_name: str, hint: Optional[str] = None) -> str:
         if hint:
