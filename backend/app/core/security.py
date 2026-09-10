@@ -1,8 +1,10 @@
 import re
 import html
 import time
+import os
 import threading
-from typing import Dict, Any, Optional, Tuple
+from urllib.parse import urlparse
+from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime, timedelta, timezone
 
 # Hard cap on any single sanitized string (DoS guard for huge inputs).
@@ -16,7 +18,7 @@ MAX_RATE_LIMIT_KEYS = 5000
 def sanitize_input_string(value: str, max_length: int = MAX_INPUT_CHARS) -> str:
     """
     Sanitize input string by removing control characters, NULL bytes,
-    truncating to max_length, and escaping potentially dangerous characters.
+    truncating to max_length, and escaping potentially dangerous HTML/script characters.
     """
     if not isinstance(value, str):
         return value
@@ -25,16 +27,218 @@ def sanitize_input_string(value: str, max_length: int = MAX_INPUT_CHARS) -> str:
     cleaned = cleaned.strip()
     if len(cleaned) > max_length:
         cleaned = cleaned[:max_length]
-    # Escape HTML to prevent injection in UI rendering
+    # Escape HTML to prevent injection in UI rendering (XSS mitigation)
     return html.escape(cleaned)
 
+
+def sanitize_filename(filename: str, max_length: int = 128) -> str:
+    """
+    Sanitize uploaded filename by stripping directory paths (preventing path traversal),
+    removing null bytes, disallowing leading dots, and permitting only safe characters.
+    """
+    if not filename or not isinstance(filename, str):
+        return "uploaded_dataset.csv"
+
+    # Remove null bytes & control characters
+    cleaned = re.sub(r'[\x00-\x1F\x7F]', '', filename).strip()
+
+    # Strip directory components (handles Unix / and Windows \)
+    cleaned = os.path.basename(cleaned.replace("\\", "/"))
+
+    # Remove dangerous characters, allow only alphanumeric, underscores, hyphens, and dots
+    cleaned = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', cleaned)
+
+    # Disallow leading dots to prevent hidden files or relative path confusion
+    cleaned = cleaned.lstrip('.')
+
+    if not cleaned:
+        cleaned = "uploaded_dataset.csv"
+
+    if len(cleaned) > max_length:
+        # Preserve file extension if possible
+        parts = cleaned.rsplit('.', 1)
+        if len(parts) == 2:
+            base, ext = parts
+            ext = ext[:10]
+            base = base[: max_length - len(ext) - 1]
+            cleaned = f"{base}.{ext}"
+        else:
+            cleaned = cleaned[:max_length]
+
+    return cleaned
+
+
+DANGEROUS_EXTENSIONS = {
+    "exe", "dll", "so", "dylib", "bin", "elf", "sh", "bash", "zsh", "bat",
+    "cmd", "ps1", "vbs", "py", "pyc", "pyd", "php", "jsp", "asp", "aspx",
+    "cgi", "pl", "com", "scr", "msi", "jar", "war", "hta", "vbe", "wsf"
+}
+
+def is_dangerous_executable_upload(content: bytes, filename: str) -> Tuple[bool, str]:
+    """
+    Inspect uploaded file content and filename to reject executable payloads,
+    scripts, and binary executables.
+    """
+    # 1. Extension check
+    fn_lower = filename.lower()
+    ext = fn_lower.rsplit('.', 1)[-1] if '.' in fn_lower else ""
+    if ext in DANGEROUS_EXTENSIONS:
+        return True, f"File extension '.{ext}' is an executable or script type and is strictly forbidden."
+
+    if not content:
+        return False, "OK"
+
+    # 2. Magic bytes inspection
+    # Linux ELF executable
+    if content.startswith(b"\x7fELF"):
+        return True, "Linux ELF binary executable detected."
+
+    # Windows PE executable (EXE / DLL / SYS)
+    if content.startswith(b"MZ"):
+        return True, "Windows PE binary executable detected."
+
+    # Mach-O executable binaries (macOS / iOS)
+    macho_magics = [
+        b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe"
+    ]
+    for mm in macho_magics:
+        if content.startswith(mm):
+            return True, "Mach-O binary executable detected."
+
+    # Unix script shebang (e.g. #!/bin/sh, #!/usr/bin/env python)
+    if content.startswith(b"#!"):
+        return True, "Script shebang header detected."
+
+    # Compiled Python bytecode
+    if content.startswith(b"\x61\x0d\x0d\x0a") or content.startswith(b"\x55\x0d\x0d\x0a"):
+        return True, "Compiled Python bytecode detected."
+
+    return False, "OK"
+
+
 def is_valid_ip(ip_str: str) -> bool:
-    """Simple check for IPv4 string validity."""
-    ipv4_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
-    if not re.match(ipv4_pattern, ip_str):
+    """Check for valid IPv4 string format."""
+    if not ip_str or not isinstance(ip_str, str):
         return False
-    parts = ip_str.split('.')
+    ipv4_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
+    if not re.match(ipv4_pattern, ip_str.strip()):
+        return False
+    parts = ip_str.strip().split('.')
     return all(0 <= int(part) <= 255 for part in parts)
+
+
+HOSTNAME_REGEX = re.compile(r'^(?!-)[a-zA-Z0-9-]{1,63}(?<!-)(\.[a-zA-Z0-9-]{1,63}(?<!-))*$')
+
+def is_valid_hostname(hostname: str) -> bool:
+    """Validate RFC 1123 compliant hostname."""
+    if not hostname or not isinstance(hostname, str) or len(hostname) > 253:
+        return False
+    return bool(HOSTNAME_REGEX.match(hostname.strip()))
+
+
+USERNAME_REGEX = re.compile(r'^[a-zA-Z0-9_\-\.@]{1,64}$')
+
+def is_valid_username(username: str) -> bool:
+    """Validate username format (alphanumeric, underscores, hyphens, dots, emails)."""
+    if not username or not isinstance(username, str):
+        return False
+    return bool(USERNAME_REGEX.match(username.strip()))
+
+
+def is_valid_url(url: str) -> bool:
+    """Validate HTTP/HTTPS URL and reject dangerous schemes (javascript:, file:, etc.)."""
+    if not url or not isinstance(url, str) or len(url) > 2048:
+        return False
+    try:
+        parsed = urlparse(url.strip())
+        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    except Exception:
+        return False
+
+
+# Injection detection patterns for auditing and testing
+SQL_INJECTION_PATTERNS = [
+    r"(?i)\b(union\s+select)\b",
+    r"(?i)\b(drop\s+table)\b",
+    r"(?i)\b(insert\s+into)\b",
+    r"(?i)\b(delete\s+from)\b",
+    r"(?i)\b(update\s+.*\s+set)\b",
+    r"(?i)\b(exec\s*\(|xp_cmdshell)\b",
+    r"(?i)'\s*(or|and)\s*'?\d+'?\s*=\s*'?\d+",
+    r"--\s*",
+    r"/\*.*?\*/"
+]
+
+def detect_sql_injection(value: str) -> bool:
+    """Scan string for SQL injection markers."""
+    if not value or not isinstance(value, str):
+        return False
+    return any(re.search(pat, value) for pat in SQL_INJECTION_PATTERNS)
+
+
+COMMAND_INJECTION_PATTERNS = [
+    r";\s*(cat|rm|whoami|id|sh|bash|curl|wget|nc|chmod|chown|uname)\b",
+    r"\|\s*(cat|rm|whoami|id|sh|bash|curl|wget|nc)\b",
+    r"&&\s*(cat|rm|whoami|id|sh|bash|curl|wget)\b",
+    r"\$\([^\)]+\)",
+    r"`[^`]+`"
+]
+
+def detect_command_injection(value: str) -> bool:
+    """Scan string for command / shell injection markers."""
+    if not value or not isinstance(value, str):
+        return False
+    return any(re.search(pat, value) for pat in COMMAND_INJECTION_PATTERNS)
+
+
+PATH_TRAVERSAL_PATTERNS = [
+    r"\.\.[/\\]",
+    r"%2e%2e[/\\]",
+    r"%2e%2e%2f",
+    r"\0",
+    r"^/etc/",
+    r"^[a-zA-Z]:[/\\]"
+]
+
+def detect_path_traversal(value: str) -> bool:
+    """Scan string for path traversal attempts."""
+    if not value or not isinstance(value, str):
+        return False
+    return any(re.search(pat, value, re.IGNORECASE) for pat in PATH_TRAVERSAL_PATTERNS)
+
+
+TEMPLATE_INJECTION_PATTERNS = [
+    r"\{\{\s*.*?\s*\}\}",
+    r"\$\{\s*.*?\s*\}",
+    r"\{%\s*.*?\s*%\}",
+    r"<%\s*.*?\s*%>"
+]
+
+def detect_template_injection(value: str) -> bool:
+    """Scan string for Server-Side Template Injection (SSTI) expressions."""
+    if not value or not isinstance(value, str):
+        return False
+    return any(re.search(pat, value) for pat in TEMPLATE_INJECTION_PATTERNS)
+
+
+XSS_PATTERNS = [
+    r"(?i)<script\b[^>]*>",
+    r"(?i)javascript\s*:",
+    r"(?i)onerror\s*=",
+    r"(?i)onload\s*=",
+    r"(?i)onclick\s*=",
+    r"(?i)<iframe\b",
+    r"(?i)<svg\b"
+]
+
+def detect_xss(value: str) -> bool:
+    """Scan string for Cross-Site Scripting (XSS) payload signatures."""
+    if not value or not isinstance(value, str):
+        return False
+    return any(re.search(pat, value) for pat in XSS_PATTERNS)
+
 
 # In-memory sliding window rate limiter state (guarded by a lock for
 # multi-worker-thread safety; entries are pruned on every check).
@@ -101,4 +305,5 @@ def reset_rate_limit(client_ip: Optional[str] = None, key_prefix: Optional[str] 
                     match = False
                 if match:
                     RATE_LIMIT_STORE.pop(k, None)
+
 

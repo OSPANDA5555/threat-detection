@@ -9,7 +9,8 @@ from app.schemas.tool import ToolDefinition, ToolExecutionRequest, ToolExecution
 from .definitions import INITIAL_TOOL_REGISTRY
 
 # Shell/control-flow markers that must never appear in string tool arguments.
-SHELL_PAYLOAD_MARKERS = (";", "&&", "||", "`", "$(", "<script>")
+SHELL_PAYLOAD_MARKERS = (";", "&&", "||", "|", "`", "$(", "<script", ">", "<", "\n", "\r")
+
 
 # Params whose values must be valid IPs when provided (validated, not rejected
 # silently — invalid values return a clear REJECTED error).

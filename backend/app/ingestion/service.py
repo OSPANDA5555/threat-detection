@@ -2,6 +2,7 @@ import os
 from typing import Dict, List, Optional, Tuple
 import uuid
 
+from app.core.security import sanitize_filename, is_dangerous_executable_upload, sanitize_input_string
 from app.schemas.dataset import (
     NormalizedEvent,
     DatasetMetadata,
@@ -44,20 +45,30 @@ class DatasetIngestionService:
         if len(content) > max_bytes:
             raise ValueError(f"Payload size ({round(len(content)/(1024*1024), 1)} MB) exceeds maximum upload cap of 25 MB.")
 
-        if not dataset_name:
-            dataset_name = os.path.splitext(file_name)[0].replace("_", " ").title()
+        # Sanitize filename and prevent path traversal
+        safe_file_name = sanitize_filename(file_name)
 
-        detected_format = self._detect_format(content, file_name, format_hint)
+        # Reject executable and script uploads
+        is_dangerous, reason = is_dangerous_executable_upload(content, safe_file_name)
+        if is_dangerous:
+            raise ValueError(f"Security Alert: Executable and script file uploads are forbidden ({reason}).")
+
+        if not dataset_name:
+            dataset_name = os.path.splitext(safe_file_name)[0].replace("_", " ").title()
+        dataset_name = sanitize_input_string(dataset_name, max_length=128)
+
+        detected_format = self._detect_format(content, safe_file_name, format_hint)
 
         if detected_format == "CSV_NETWORK_FLOW":
-            metadata, events = self._cic_normalizer.parse_and_normalize(content, file_name, dataset_name)
+            metadata, events = self._cic_normalizer.parse_and_normalize(content, safe_file_name, dataset_name)
         elif detected_format == "JSON_EVENTS":
-            metadata, events = self._json_normalizer.parse_and_normalize(content, file_name, dataset_name)
+            metadata, events = self._json_normalizer.parse_and_normalize(content, safe_file_name, dataset_name)
         elif detected_format == "PCAP":
-            metadata, events = self._pcap_normalizer.parse_and_normalize(content, file_name, dataset_name)
+            metadata, events = self._pcap_normalizer.parse_and_normalize(content, safe_file_name, dataset_name)
         else:
             # Fallback to CSV
-            metadata, events = self._cic_normalizer.parse_and_normalize(content, file_name, dataset_name)
+            metadata, events = self._cic_normalizer.parse_and_normalize(content, safe_file_name, dataset_name)
+
 
         if owner_id:
             metadata.owner_id = owner_id
