@@ -14,10 +14,10 @@ services:
       - ENVIRONMENT=production
       - LOG_LEVEL=INFO
       - POSTGRES_SERVER=db
-      - POSTGRES_USER=threat_hunter
-      - POSTGRES_PASSWORD=threat_hunter_sec_pass_2026
-      - POSTGRES_DB=threat_hunting_db
-      - LOG_STORAGE_URL=http://log_storage:9200/api/v1/logs
+      - POSTGRES_USER=${POSTGRES_USER:-threat_hunter}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-threat_hunter_sec_pass_2026}
+      - POSTGRES_DB=${POSTGRES_DB:-threat_hunting_db}
+      - LOG_STORAGE_URL=${LOG_STORAGE_URL:-http://log_storage:9200/api/v1/logs}
     env_file:
       - .env.example
     depends_on:
@@ -52,9 +52,9 @@ services:
     image: postgres:15-alpine
     container_name: threat_hunting_db
     environment:
-      POSTGRES_USER: threat_hunter
-      POSTGRES_PASSWORD: threat_hunter_sec_pass_2026
-      POSTGRES_DB: threat_hunting_db
+      POSTGRES_USER: ${POSTGRES_USER:-threat_hunter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-threat_hunter_sec_pass_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-threat_hunting_db}
     ports:
       - "5432:5432"
     volumes:
