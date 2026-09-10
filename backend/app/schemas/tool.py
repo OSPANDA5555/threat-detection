@@ -28,9 +28,10 @@ class ToolDefinition(BaseModel):
         return v
 
 class ToolExecutionRequest(BaseModel):
-    tool_name: str
+    tool_name: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_]{1,64}$")
     arguments: Dict[str, Any] = Field(default_factory=dict)
-    hunt_id: Optional[str] = None
+    hunt_id: Optional[str] = Field(default=None, max_length=64, pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$")
+
 
     @field_validator("tool_name")
     @classmethod

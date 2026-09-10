@@ -650,6 +650,14 @@ async def start_event_replay(
     Start chronological event replay from an imported dataset at specified speedMultiplier.
     Preserves original event timestamps without modification.
     """
+    ds = dataset_service.get_dataset(config.datasetId)
+    if not ds:
+        raise HTTPException(status_code=400, detail=f"Dataset '{config.datasetId}' not found.")
+    
+    if current_user.role != UserRole.ADMIN and ds.owner_id not in [current_user.user_id, "system-demo"] and ds.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not have permission to replay this dataset.")
+
+
     try:
         return await replay_engine.start(config)
     except ValueError as e:
@@ -703,15 +711,22 @@ async def get_event_replay_status(
 @app.websocket(f"{settings.API_V1_STR}/events/ws")
 async def websocket_event_stream(
     websocket: WebSocket,
-    client_id: Optional[str] = Query(None),
-    last_sequence: Optional[int] = Query(None),
-    token: Optional[str] = Query(None)
+    client_id: Optional[str] = Query(None, max_length=64),
+    last_sequence: Optional[int] = Query(None, ge=0),
+    token: Optional[str] = Query(None, max_length=1024)
 ):
     """
     Real-time WebSocket event stream for SOC clients.
-    Supports automatic reconnects, sequence tracking, and duplicate prevention.
+    Supports token verification, automatic reconnects, sequence tracking, and duplicate prevention.
     """
+    if token:
+        payload = verify_token(token)
+        if not payload:
+            await websocket.close(code=1008, reason="Invalid or expired authentication token")
+            return
+
     await streaming_hub.connect(websocket, client_id=client_id, last_sequence=last_sequence)
+
     try:
         while True:
             raw_text = await websocket.receive_text()
@@ -964,7 +979,7 @@ async def stop_scenario_replay(
 
 
 class EvaluateRequest(BaseModel):
-    scenario_id: str = Field(max_length=200)
+    scenario_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$")
     finding: Finding
     evidence_list: List[Evidence] = Field(default_factory=list, max_length=500)
 
@@ -997,12 +1012,16 @@ async def run_full_evaluation_benchmark(
 
 @app.get(f"{settings.API_V1_STR}/telemetry/lab/runs", tags=["Evaluation Lab"])
 async def list_evaluation_runs(
+    offset: int = Query(default=0, ge=0, le=100000),
+    limit: int = Query(default=50, ge=1, le=500),
     current_user: AuthUser = Depends(require_analyst_or_admin)
 ):
     """
-    List all historical evaluation benchmark runs for side-by-side reproducibility comparison.
+    List historical evaluation benchmark runs with pagination bounds.
     """
-    return list(EVALUATION_RUN_STORE.values())
+    runs = list(EVALUATION_RUN_STORE.values())
+    return runs[offset : offset + limit]
+
 
 @app.get(f"{settings.API_V1_STR}/telemetry/lab/runs/{{run_id}}", response_model=EvaluationRun, tags=["Evaluation Lab"])
 async def get_evaluation_run_detail(

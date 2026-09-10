@@ -1,3 +1,4 @@
+import json
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
@@ -159,3 +160,41 @@ class TestRequestBodyBoundsAndSanitization:
         oversized_q = "X" * 2500
         resp_over = client.post("/api/v1/hunts/run", headers=headers, json={"question": oversized_q})
         assert resp_over.status_code == 422
+
+
+class TestWebSocketAndBOLAValidation:
+    """15, 16. Test WebSocket token verification and Replay IDOR/BOLA protection."""
+
+    def test_websocket_with_valid_token_connects(self):
+        token = get_auth_token(role=UserRole.ANALYST)
+        with client.websocket_connect(f"/ws/events?token={token}") as ws:
+            raw = ws.receive_text()
+            data = json.loads(raw)
+            assert data["type"] == "connected"
+
+    def test_websocket_with_invalid_token_rejected(self):
+        with pytest.raises(Exception):
+            with client.websocket_connect("/ws/events?token=invalid.token.signature") as ws:
+                ws.receive_text()
+
+    def test_replay_bola_unauthorized_dataset_access_blocked(self):
+        from app.ingestion.service import dataset_service
+        # Create a dataset belonging to a different tenant
+        sample_csv = b"Timestamp,Source IP,Destination IP,Source Port,Destination Port,Protocol,Label\n2017-07-07 08:30:00,192.168.1.1,10.0.0.1,5000,80,TCP,BENIGN\n"
+        report = dataset_service.import_dataset(
+            content=sample_csv,
+            file_name="secret_tenant_flow.csv",
+            owner_id="tenant_b_user",
+            tenant_id="tenant-beta-isolated"
+        )
+        ds_id = report.dataset.dataset_id
+
+        # Tenant A analyst tries to start replay on Tenant B's dataset -> 403 Forbidden
+        tenant_a_headers = get_auth_headers(role=UserRole.ANALYST, user_id="analyst_a", tenant_id="tenant-alpha")
+        resp = client.post("/api/replay/start", headers=tenant_a_headers, json={
+            "datasetId": ds_id,
+            "speedMultiplier": 2.0
+        })
+        assert resp.status_code == 403
+        assert "Forbidden" in resp.json()["detail"]
+

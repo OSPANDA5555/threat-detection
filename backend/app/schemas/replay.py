@@ -10,10 +10,11 @@ class ReplayState(str, Enum):
     COMPLETED = "completed"
 
 class ReplayConfig(BaseModel):
-    datasetId: str = Field(..., description="ID of the imported dataset to replay")
+    datasetId: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-\.]{1,64}$", description="ID of the imported dataset to replay")
     speedMultiplier: float = Field(default=1.0, gt=0, le=1000.0, description="Replay speed multiplier (e.g. 0.25, 1, 10, 100)")
-    startTimestamp: Optional[str] = Field(default=None, description="Optional ISO start timestamp filter")
-    endTimestamp: Optional[str] = Field(default=None, description="Optional ISO end timestamp filter")
+    startTimestamp: Optional[str] = Field(default=None, max_length=50, description="Optional ISO start timestamp filter")
+    endTimestamp: Optional[str] = Field(default=None, max_length=50, description="Optional ISO end timestamp filter")
+
 
     model_config = ConfigDict(
         populate_by_name=True,
