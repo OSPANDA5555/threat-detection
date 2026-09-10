@@ -14,21 +14,54 @@ from app.ingestion.normalizers.cic_ids2017 import CicIds2017Normalizer
 from app.ingestion.normalizers.json_normalizer import JsonEventNormalizer
 from app.ingestion.normalizers.pcap_adapter import PcapIngestionAdapter
 
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple, Set
+
+MAX_STORED_DATASETS = 50
+MAX_EVENTS_PER_DATASET = 50000
+
 class DatasetIngestionService:
     """
     Service orchestrating cybersecurity dataset ingestion, format auto-detection,
-    event normalization, indexed persistence, retention controls, and query filtering.
+    event normalization, indexed repository persistence, retention controls, and query filtering.
     """
 
     def __init__(self):
         self._datasets: Dict[str, DatasetMetadata] = {}
         self._events: Dict[str, List[NormalizedEvent]] = {}
-        self._deleted_dataset_ids: set = set()
-        self._indices: Dict[str, Dict[str, Dict[str, List[int]]]] = {}  # dataset_id -> field -> value -> list[indices]
+        self._indices: Dict[str, Dict[str, Dict[str, List[int]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        self._deleted_dataset_ids: Set[str] = set()
         self._cic_normalizer = CicIds2017Normalizer()
         self._json_normalizer = JsonEventNormalizer()
         self._pcap_normalizer = PcapIngestionAdapter()
         self._preload_samples()
+
+    def is_deleted(self, dataset_id: str) -> bool:
+        """Check if dataset was explicitly deleted (stale ID guard)."""
+        return dataset_id in self._deleted_dataset_ids
+
+    def _build_indices(self, dataset_id: str, events: List[NormalizedEvent]):
+        """Build secondary indices for fast O(1) query lookups on high-volume datasets."""
+        ds_idx = self._indices[dataset_id]
+        ds_idx.clear()
+        for idx, evt in enumerate(events):
+            if evt.source_ip:
+                ds_idx["source_ip"][evt.source_ip].append(idx)
+            if evt.destination_ip:
+                ds_idx["destination_ip"][evt.destination_ip].append(idx)
+            if evt.label:
+                ds_idx["label"][evt.label.lower()].append(idx)
+            if evt.protocol:
+                ds_idx["protocol"][evt.protocol.upper()].append(idx)
+
+    def _enforce_retention_capacity(self):
+        """Enforce maximum stored dataset retention limit (prune oldest non-default datasets)."""
+        if len(self._datasets) > MAX_STORED_DATASETS:
+            overflow = len(self._datasets) - MAX_STORED_DATASETS
+            # Sort by total_events and creation time
+            evictable = [ds_id for ds_id, ds in self._datasets.items() if ds.dataset_name != "CIC-IDS2017 Benchmark Flow Sample"]
+            for ds_id in evictable[:overflow]:
+                self.delete_dataset(ds_id)
 
     def import_dataset(
         self,
@@ -40,7 +73,7 @@ class DatasetIngestionService:
         tenant_id: Optional[str] = "soc-org-primary"
     ) -> DatasetImportReport:
         """
-        Ingests a dataset from bytes, normalizes it, builds secondary indices, and saves metadata.
+        Ingests a dataset from bytes, normalizes it, and saves metadata.
         """
         # Hard upload size limit guard (default 25MB)
         max_bytes = 25 * 1024 * 1024
@@ -71,39 +104,24 @@ class DatasetIngestionService:
             # Fallback to CSV
             metadata, events = self._cic_normalizer.parse_and_normalize(content, safe_file_name, dataset_name)
 
+        # Enforce maximum event cap per dataset
+        if len(events) > MAX_EVENTS_PER_DATASET:
+            events = events[:MAX_EVENTS_PER_DATASET]
+            metadata.total_events = len(events)
+
         if owner_id:
             metadata.owner_id = owner_id
         if tenant_id:
             metadata.tenant_id = tenant_id
 
-        # Enforce max events retention limit per dataset
-        max_dataset_events = 50000
-        if len(events) > max_dataset_events:
-            events = events[:max_dataset_events]
-            metadata.total_events = max_dataset_events
+        # Enforce retention bounds before storing new dataset
+        self._enforce_retention_capacity()
 
-        # Build secondary index for fast querying
-        ds_id = metadata.dataset_id
-        self._indices[ds_id] = {
-            "source_ip": {},
-            "destination_ip": {},
-            "label": {}
-        }
-        for idx, evt in enumerate(events):
-            if evt.source_ip:
-                self._indices[ds_id]["source_ip"].setdefault(evt.source_ip, []).append(idx)
-            if evt.destination_ip:
-                self._indices[ds_id]["destination_ip"].setdefault(evt.destination_ip, []).append(idx)
-            if evt.label:
-                self._indices[ds_id]["label"].setdefault(evt.label.upper(), []).append(idx)
-
-        # Save to store
-        self._datasets[ds_id] = metadata
-        self._events[ds_id] = events
-        self._deleted_dataset_ids.discard(ds_id)
-
-        # Prune capacity
-        self.prune_retention()
+        # Save to store and build fast secondary indices
+        self._datasets[metadata.dataset_id] = metadata
+        self._events[metadata.dataset_id] = events
+        self._build_indices(metadata.dataset_id, events)
+        self._deleted_dataset_ids.discard(metadata.dataset_id)
 
         return DatasetImportReport(
             dataset=metadata,
@@ -125,15 +143,11 @@ class DatasetIngestionService:
         dataset_id: str,
         filter_spec: DatasetQueryFilter
     ) -> Tuple[List[NormalizedEvent], int]:
-        if dataset_id in self._deleted_dataset_ids or dataset_id not in self._datasets:
+        if dataset_id in self._deleted_dataset_ids:
             return [], 0
 
         all_events = self._events.get(dataset_id, [])
         filtered = []
-
-        # Bound pagination to prevent unbounded memory consumption
-        filter_spec.limit = min(max(1, filter_spec.limit), 500)
-        filter_spec.offset = max(0, filter_spec.offset)
 
         for evt in all_events:
             if filter_spec.label and filter_spec.label.lower() not in (evt.label or "").lower():
@@ -160,8 +174,10 @@ class DatasetIngestionService:
     def delete_dataset(self, dataset_id: str) -> bool:
         if dataset_id in self._datasets:
             del self._datasets[dataset_id]
-            self._events.pop(dataset_id, None)
-            self._indices.pop(dataset_id, None)
+            if dataset_id in self._events:
+                del self._events[dataset_id]
+            if dataset_id in self._indices:
+                del self._indices[dataset_id]
             self._deleted_dataset_ids.add(dataset_id)
             return True
         return False
