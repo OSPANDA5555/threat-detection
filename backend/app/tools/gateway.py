@@ -4,7 +4,7 @@ import asyncio
 from typing import Dict, Any, List, Optional
 from app.config import settings
 from app.core.audit import AuditLogger
-from app.core.security import sanitize_input_string, is_valid_ip
+from app.core.security import sanitize_input_string, is_valid_ip, is_ssrf_blocked_target
 from app.schemas.tool import ToolDefinition, ToolExecutionRequest, ToolExecutionResult
 from .definitions import INITIAL_TOOL_REGISTRY
 
@@ -224,6 +224,9 @@ class ToolGateway:
             elif isinstance(val, str):
                 if len(val) > settings.MAX_STRING_ARG_CHARS:
                     return {}, f"Invalid Parameter: Argument '{param_spec.name}' exceeds maximum length of {settings.MAX_STRING_ARG_CHARS} characters."
+                # Check for SSRF target attempts (metadata endpoints, loopback)
+                if is_ssrf_blocked_target(val):
+                    return {}, f"Security Violation: SSRF attempt detected in parameter '{param_spec.name}'."
                 # Check for shell payload attempt markers BEFORE escaping
                 # (escaping first would transform e.g. <script> and weaken detection).
                 if any(marker in val for marker in SHELL_PAYLOAD_MARKERS):

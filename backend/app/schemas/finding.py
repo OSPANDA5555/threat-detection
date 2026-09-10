@@ -12,6 +12,12 @@ class Severity(str, Enum):
     HIGH = "HIGH"
     CRITICAL = "CRITICAL"
 
+class FindingVerdict(str, Enum):
+    CONFIRMED = "CONFIRMED"
+    LIKELY = "LIKELY"
+    POSSIBLE = "POSSIBLE"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT EVIDENCE"
+
 class MitreAttackMapping(BaseModel):
     tactic: str = Field(description="MITRE ATT&CK Tactic (e.g., Credential Access, Privilege Escalation)")
     technique_name: str = Field(description="MITRE ATT&CK Technique Name (e.g., Brute Force: Password Spray)")
@@ -23,6 +29,7 @@ class Finding(BaseModel):
     id: str = Field(default_factory=lambda: f"fnd-{uuid.uuid4().hex[:10]}")
     title: str
     severity: Severity
+    verdict: FindingVerdict = Field(default=FindingVerdict.LIKELY, description="Evidence confidence level: CONFIRMED, LIKELY, POSSIBLE, or INSUFFICIENT EVIDENCE")
     confidence: float = Field(ge=0.0, le=1.0)
     description: str
     evidenceIds: List[str] = Field(min_length=1, description="List of evidence IDs backing this finding")

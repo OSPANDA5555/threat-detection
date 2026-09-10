@@ -419,12 +419,13 @@ class AutonomousHuntingEngine:
             recommendation=f"Isolate IP {ip_str} at edge firewall, audit user credentials on {host_str}, and review authentication logs."
         )
 
-        # Enforce Evidence Grounding Engine validation
-        is_grounded, err, _ = EvidenceGroundingEngine.validate_finding_grounding(finding, hunt.evidence)
+        # Enforce Evidence Grounding Engine validation & verdict classification
+        is_grounded, err, validated_finding = EvidenceGroundingEngine.validate_finding_grounding(finding, hunt.evidence)
         if not is_grounded:
             finding.description = f"Insufficient evidence: {err}"
+            finding.confidence = 0.0
 
-        return [finding]
+        return [validated_finding or finding]
 
     @staticmethod
     def _describe_dominant_signal(evidence: List[Evidence]) -> str:

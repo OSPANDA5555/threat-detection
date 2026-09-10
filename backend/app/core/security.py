@@ -158,6 +158,54 @@ def is_valid_url(url: str) -> bool:
         return False
 
 
+SSRF_BLOCKED_HOSTNAMES = {
+    "169.254.169.254", "metadata.google.internal", "metadata", "instance-data",
+    "127.0.0.1", "localhost", "::1", "0.0.0.0"
+}
+
+def is_ssrf_blocked_target(target: str) -> bool:
+    """
+    Check if a target host, IP, or URL attempts Server-Side Request Forgery (SSRF)
+    against cloud metadata services, link-local IPs, or loopback interfaces.
+    """
+    if not target or not isinstance(target, str):
+        return False
+    target_clean = target.strip().lower()
+    
+    # Check if target is a URL
+    if target_clean.startswith("http://") or target_clean.startswith("https://"):
+        try:
+            parsed = urlparse(target_clean)
+            hostname = parsed.hostname or ""
+            if hostname in SSRF_BLOCKED_HOSTNAMES:
+                return True
+            if hostname.startswith("169.254.") or hostname.startswith("127."):
+                return True
+        except Exception:
+            return True
+    
+    # Check if target is raw host/IP string
+    if target_clean in SSRF_BLOCKED_HOSTNAMES:
+        return True
+    if target_clean.startswith("169.254.") or target_clean.startswith("127."):
+        return True
+    if "metadata.google" in target_clean or "169.254.169.254" in target_clean:
+        return True
+
+    return False
+
+
+def is_ssrf_safe_url(url: str) -> Tuple[bool, str]:
+    """
+    Verify that an AI-supplied or user-supplied URL is safe from SSRF.
+    """
+    if not is_valid_url(url):
+        return False, "Invalid URL format or unsupported scheme (must be http/https)."
+    if is_ssrf_blocked_target(url):
+        return False, "SSRF Violation: Access to metadata services, loopback, and internal addresses is strictly forbidden."
+    return True, "OK"
+
+
 # Injection detection patterns for auditing and testing
 SQL_INJECTION_PATTERNS = [
     r"(?i)\b(union\s+select)\b",

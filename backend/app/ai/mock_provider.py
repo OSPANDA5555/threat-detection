@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 from app.schemas.hunt import StructuredHuntPlan, HuntPlanStep, HypothesisState
 from app.schemas.tool import ToolDefinition, ToolExecutionRequest
-from app.schemas.finding import Finding, Severity
+from app.schemas.finding import Finding, Severity, FindingVerdict
 from app.schemas.evidence import Evidence
 from app.tools.gateway import ToolGateway
 from app.ai.base import BaseAIProvider
@@ -136,6 +136,7 @@ class MockAIProvider(BaseAIProvider):
         return Finding(
             title=f"Suspicious Security Activity Detected on {host}",
             severity=Severity.HIGH,
+            verdict=FindingVerdict.CONFIRMED,
             confidence=0.92,
             description=f"Automated threat hunt identified suspicious telemetry events originating from IP {ip} targeting host {host}.",
             evidenceIds=[e.id for e in hunt.evidence[:3]],

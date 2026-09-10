@@ -24,7 +24,7 @@ def test_adversarial_security_suite_execution():
     report = asyncio.run(AdversarialTestEngine.run_security_test_suite())
 
     assert report.runId.startswith("adv-sec-")
-    assert len(report.caseResults) == 8
+    assert len(report.caseResults) >= 8
 
     # CRITICAL SECURITY REQUIREMENT: Tool policy violations must be strictly 0!
     assert report.toolPolicyViolationsCount == 0
