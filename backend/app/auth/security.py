@@ -255,10 +255,16 @@ async def require_agent_or_admin(
     # 1. Try standard user authentication
     try:
         user = await get_current_user(credentials=credentials, token_param=token_param, x_api_key=x_api_key)
-        if user.role in [UserRole.AGENT, UserRole.ANALYST, UserRole.ADMIN]:
+        if user.role in [UserRole.AGENT, UserRole.ADMIN]:
             return user
-    except HTTPException:
-        pass
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: Telemetry ingestion requires AGENT or ADMIN privileges"
+            )
+    except HTTPException as e:
+        if e.status_code == status.HTTP_403_FORBIDDEN:
+            raise e
 
     # 2. Try raw Bearer token matching configured SOC_AGENT_API_KEY directly
     if credentials and credentials.credentials:
