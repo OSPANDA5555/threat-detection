@@ -12,10 +12,18 @@ from app.config import settings
 from app.auth.models import UserRole, AuthUser, TokenPayload
 
 # HTTP Bearer Scheme (auto_error=False allows falling back to API-Key or Query Tokens cleanly)
+import os
+
 security_bearer = HTTPBearer(auto_error=False)
 
-# Seeded default user credentials for enterprise demo operations
-# In production, these are configured via environment variables
+def _get_user_password_hash(user_env_key: str, default_pwd: str) -> str:
+    hash_val = os.environ.get(f"{user_env_key}_PASSWORD_HASH")
+    if hash_val:
+        return hash_val.strip()
+    pwd = os.environ.get(f"{user_env_key}_PASSWORD", default_pwd)
+    return hashlib.sha256(pwd.encode("utf-8")).hexdigest()
+
+# Seeded default user credentials for enterprise demo operations (overridable via env)
 DEFAULT_USERS: Dict[str, Dict[str, Any]] = {
     "admin": {
         "user_id": "usr-admin-01",
@@ -23,7 +31,7 @@ DEFAULT_USERS: Dict[str, Dict[str, Any]] = {
         "email": "admin@threat-copilot.internal",
         "role": UserRole.ADMIN,
         "tenant_id": "soc-org-primary",
-        "password_hash": hashlib.sha256("AdminSecret2026!".encode("utf-8")).hexdigest(),
+        "password_hash": _get_user_password_hash("ADMIN", "AdminSecret2026!"),
         "is_active": True
     },
     "analyst": {
@@ -32,7 +40,7 @@ DEFAULT_USERS: Dict[str, Dict[str, Any]] = {
         "email": "analyst@threat-copilot.internal",
         "role": UserRole.ANALYST,
         "tenant_id": "soc-org-primary",
-        "password_hash": hashlib.sha256("AnalystHunt2026!".encode("utf-8")).hexdigest(),
+        "password_hash": _get_user_password_hash("ANALYST", "AnalystHunt2026!"),
         "is_active": True
     },
     "analyst2": {
@@ -41,10 +49,11 @@ DEFAULT_USERS: Dict[str, Dict[str, Any]] = {
         "email": "analyst2@threat-copilot.internal",
         "role": UserRole.ANALYST,
         "tenant_id": "soc-org-secondary",
-        "password_hash": hashlib.sha256("Analyst2Secret2026!".encode("utf-8")).hexdigest(),
+        "password_hash": _get_user_password_hash("ANALYST2", "Analyst2Secret2026!"),
         "is_active": True
     }
 }
+
 
 
 def _b64_encode(data: bytes) -> str:
